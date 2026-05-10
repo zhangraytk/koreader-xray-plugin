@@ -200,6 +200,9 @@ return {
     -- API Keys
     gemini_api_key = "AIzaSy...",
     chatgpt_api_key = "sk-...",
+    -- Optional: OpenAI-compatible endpoint
+    -- Example: "https://your-host/v1/chat/completions"
+    chatgpt_endpoint = "https://api.openai.com/v1/chat/completions",
     
     -- Default AI Provider
     default_provider = "gemini",  -- or "chatgpt"

@@ -109,6 +109,7 @@ function AIHelper:loadConfig()
         if config.gemini_model then self.providers.gemini.model = config.gemini_model end
         if config.chatgpt_api_key then self.providers.chatgpt.api_key = config.chatgpt_api_key end
         if config.chatgpt_model then self.providers.chatgpt.model = config.chatgpt_model end
+        if config.chatgpt_endpoint then self.providers.chatgpt.endpoint = config.chatgpt_endpoint end
         if config.default_provider then self.default_provider = config.default_provider end
         if config.settings then self.settings = config.settings end
     end
@@ -137,6 +138,18 @@ function AIHelper:loadModelFromFile()
         file:close()
         if model and #model > 0 then
             self.providers.chatgpt.model = model
+        end
+    end
+
+    -- ChatGPT endpoint (OpenAI-compatible)
+    local chatgpt_endpoint_file = DataStorage:getSettingsDir() .. "/xray/chatgpt_endpoint.txt"
+    file = io.open(chatgpt_endpoint_file, "r")
+    if file then
+        local endpoint = file:read("*a"):match("^%s*(.-)%s*$")
+        file:close()
+        if endpoint and #endpoint > 0 then
+            self.providers.chatgpt.endpoint = endpoint
+            logger.info("AIHelper: Loaded ChatGPT endpoint from file")
         end
     end
     
@@ -195,6 +208,38 @@ function AIHelper:saveAPIKeyToFile(provider, api_key)
     end
     logger.warn("AIHelper: Failed to save", provider, "API key")
     return false
+end
+
+function AIHelper:saveProviderSettingToFile(provider, setting_name, value)
+    local DataStorage = require("datastorage")
+    local settings_dir = DataStorage:getSettingsDir()
+    local xray_dir = settings_dir .. "/xray"
+    local lfs = require("libs/libkoreader-lfs")
+    lfs.mkdir(xray_dir)
+
+    local setting_file = xray_dir .. "/" .. provider .. "_" .. setting_name .. ".txt"
+    local file = io.open(setting_file, "w")
+    if file then
+        file:write(value)
+        file:close()
+        logger.info("AIHelper: Saved", provider, setting_name, "to file")
+        return true
+    end
+    logger.warn("AIHelper: Failed to save", provider, setting_name)
+    return false
+end
+
+function AIHelper:setChatGPTEndpoint(endpoint)
+    if type(endpoint) ~= "string" then return false end
+    endpoint = endpoint:match("^%s*(.-)%s*$")
+    if not endpoint or #endpoint == 0 then return false end
+    endpoint = endpoint:gsub("/+$", "")
+    if not endpoint:match("/chat/completions$") then
+        endpoint = endpoint .. "/chat/completions"
+    end
+    self.providers.chatgpt.endpoint = endpoint
+    self:saveProviderSettingToFile("chatgpt", "endpoint", endpoint)
+    return true
 end
 
 -- Get book data from AI
@@ -375,6 +420,12 @@ function AIHelper:callChatGPT(prompt, config)
     
     local model = config.model or "gpt-4o-mini"
     local url = config.endpoint or "https://api.openai.com/v1/chat/completions"
+    if type(url) == "string" then
+        url = url:gsub("/+$", "")
+        if not url:match("/chat/completions$") then
+            url = url .. "/chat/completions"
+        end
+    end
     
     -- System instruction ekle (eğer prompts'ta varsa)
     local system_instruction = self.prompts and self.prompts.system_instruction or 

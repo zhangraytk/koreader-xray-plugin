@@ -414,6 +414,13 @@ function XRayPlugin:addToMainMenu(menu_items)
                             self:setChatGPTAPIKey()
                         end,
                     },
+                    {
+                        text = "OpenAI Compatible Endpoint",
+                        keep_menu_open = true,
+                        callback = function()
+                            self:setOpenAICompatibleEndpoint()
+                        end,
+                    },
                     { separator = true },
                     {
                         text = self.loc:t("menu_provider_select"), 
@@ -1265,6 +1272,56 @@ function XRayPlugin:setChatGPTAPIKey()
                                 text = self.loc:t("chatgpt_key_saved"), 
                                 timeout = 3,
                             })
+                        end
+                        UIManager:close(input_dialog)
+                    end,
+                },
+            }
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
+function XRayPlugin:setOpenAICompatibleEndpoint()
+    local InputDialog = require("ui/widget/inputdialog")
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local current_endpoint = self.ai_helper.providers.chatgpt.endpoint or "https://api.openai.com/v1/chat/completions"
+
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = "OpenAI Compatible Endpoint",
+        input = current_endpoint,
+        input_hint = "https://host/v1/chat/completions",
+        description = "Set a custom OpenAI-compatible endpoint.\nIf you enter only a base URL, /chat/completions is appended automatically.",
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function()
+                        UIManager:close(input_dialog)
+                    end,
+                },
+                {
+                    text = self.loc:t("save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local endpoint = input_dialog:getInputText()
+                        if endpoint and #endpoint > 0 then
+                            local success = self.ai_helper:setChatGPTEndpoint(endpoint)
+                            if success then
+                                self.ai_provider = "chatgpt"
+                                UIManager:show(InfoMessage:new{
+                                    text = "OpenAI-compatible endpoint saved",
+                                    timeout = 3,
+                                })
+                            end
                         end
                         UIManager:close(input_dialog)
                     end,
