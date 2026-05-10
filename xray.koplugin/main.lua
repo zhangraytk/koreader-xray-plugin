@@ -415,7 +415,7 @@ function XRayPlugin:addToMainMenu(menu_items)
                         end,
                     },
                     {
-                        text = "OpenAI Compatible Endpoint",
+                        text = self.loc:t("menu_openai_endpoint"),
                         keep_menu_open = true,
                         callback = function()
                             self:setOpenAICompatibleEndpoint()
@@ -1296,10 +1296,10 @@ function XRayPlugin:setOpenAICompatibleEndpoint()
 
     local input_dialog
     input_dialog = InputDialog:new{
-        title = "OpenAI Compatible Endpoint",
+        title = self.loc:t("openai_endpoint_title"),
         input = current_endpoint,
-        input_hint = "https://host/v1/chat/completions",
-        description = "Set a custom OpenAI-compatible endpoint.\nIf you enter only a base URL, /chat/completions is appended automatically.",
+        input_hint = self.loc:t("openai_endpoint_hint"),
+        description = self.loc:t("openai_endpoint_desc"),
         buttons = {
             {
                 {
@@ -1318,7 +1318,7 @@ function XRayPlugin:setOpenAICompatibleEndpoint()
                             if success then
                                 self.ai_provider = "chatgpt"
                                 UIManager:show(InfoMessage:new{
-                                    text = "OpenAI-compatible endpoint saved",
+                                    text = self.loc:t("openai_endpoint_saved"),
                                     timeout = 3,
                                 })
                             end

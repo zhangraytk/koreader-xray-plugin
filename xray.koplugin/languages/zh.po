@@ -798,3 +798,21 @@ msgstr "🔒 Spoiler-free Mode: %%%d"
 
 msgid "full_book_mode_active"
 msgstr "📖 Full Mode"
+
+# ==============================
+# OPENAI COMPATIBLE ENDPOINT
+# ==============================
+msgid "menu_openai_endpoint"
+msgstr "OpenAI 兼容端点"
+
+msgid "openai_endpoint_title"
+msgstr "OpenAI 兼容端点"
+
+msgid "openai_endpoint_hint"
+msgstr "https://host/v1/chat/completions"
+
+msgid "openai_endpoint_desc"
+msgstr "设置自定义 OpenAI 兼容端点。\n如果只输入基础 URL，将自动追加 /chat/completions。"
+
+msgid "openai_endpoint_saved"
+msgstr "OpenAI 兼容端点已保存"

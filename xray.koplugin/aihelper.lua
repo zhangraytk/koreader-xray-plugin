@@ -229,14 +229,20 @@ function AIHelper:saveProviderSettingToFile(provider, setting_name, value)
     return false
 end
 
-function AIHelper:setChatGPTEndpoint(endpoint)
-    if type(endpoint) ~= "string" then return false end
+function AIHelper:normalizeChatCompletionsEndpoint(endpoint)
+    if type(endpoint) ~= "string" then return nil end
     endpoint = endpoint:match("^%s*(.-)%s*$")
-    if not endpoint or #endpoint == 0 then return false end
+    if not endpoint or #endpoint == 0 then return nil end
     endpoint = endpoint:gsub("/+$", "")
     if not endpoint:match("/chat/completions$") then
         endpoint = endpoint .. "/chat/completions"
     end
+    return endpoint
+end
+
+function AIHelper:setChatGPTEndpoint(endpoint)
+    endpoint = self:normalizeChatCompletionsEndpoint(endpoint)
+    if not endpoint then return false end
     self.providers.chatgpt.endpoint = endpoint
     self:saveProviderSettingToFile("chatgpt", "endpoint", endpoint)
     return true
@@ -419,13 +425,7 @@ function AIHelper:callChatGPT(prompt, config)
     end
     
     local model = config.model or "gpt-4o-mini"
-    local url = config.endpoint or "https://api.openai.com/v1/chat/completions"
-    if type(url) == "string" then
-        url = url:gsub("/+$", "")
-        if not url:match("/chat/completions$") then
-            url = url .. "/chat/completions"
-        end
-    end
+    local url = self:normalizeChatCompletionsEndpoint(config.endpoint) or "https://api.openai.com/v1/chat/completions"
     
     -- System instruction ekle (eğer prompts'ta varsa)
     local system_instruction = self.prompts and self.prompts.system_instruction or 
