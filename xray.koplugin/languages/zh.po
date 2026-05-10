@@ -1,4 +1,4 @@
-# English translation for X-Ray Plugin
+# Chinese (Simplified) translation for X-Ray Plugin
 # Copyright (C) 2025
 # This file is distributed under the same license as the X-Ray package.
 #
@@ -42,7 +42,7 @@ msgid "menu_locations"
 msgstr "地点"
 
 msgid "menu_author_info"
-msgstr "Author Info"
+msgstr "作者信息"
 
 msgid "menu_summary"
 msgstr "摘要"
