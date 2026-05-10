@@ -14,6 +14,9 @@ return {
     -- ChatGPT API Key 
     -- API key almak için: https://platform.openai.com/api-keys
     chatgpt_api_key = "sk-XXXX",  -- Buraya API keyinizi yazın: "sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    -- OpenAI uyumlu özel endpoint (opsiyonel)
+    -- Örn: "https://your-host/v1/chat/completions"
+    chatgpt_endpoint = "https://api.openai.com/v1/chat/completions",
     
     -- Varsayılan AI Sağlayıcı
     default_provider = "gemini",

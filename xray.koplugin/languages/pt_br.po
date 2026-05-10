@@ -556,3 +556,22 @@ msgstr "🔒 Modo Sem Spoiler: %%%d"
 
 msgid "full_book_mode_active"
 msgstr "📖 Modo Livro Completo"
+
+# ==============================
+# OPENAI COMPATIBLE ENDPOINT
+# ==============================
+
+msgid "menu_openai_endpoint"
+msgstr "Endpoint compatível com OpenAI"
+
+msgid "openai_endpoint_title"
+msgstr "Endpoint compatível com OpenAI"
+
+msgid "openai_endpoint_hint"
+msgstr "https://host/v1/chat/completions"
+
+msgid "openai_endpoint_desc"
+msgstr "Defina um endpoint compatível com OpenAI.\nSe você informar apenas a URL base, /chat/completions será adicionado automaticamente."
+
+msgid "openai_endpoint_saved"
+msgstr "Endpoint compatível com OpenAI salvo"
