@@ -650,6 +650,7 @@ msgstr "📖 Modo libro completo"
 # ==============================
 # OPENAI COMPATIBLE ENDPOINT
 # ==============================
+
 msgid "menu_openai_endpoint"
 msgstr "Endpoint compatible con OpenAI"
 

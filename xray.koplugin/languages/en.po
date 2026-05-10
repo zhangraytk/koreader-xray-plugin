@@ -802,6 +802,7 @@ msgstr "📖 Full Mode"
 # ==============================
 # OPENAI COMPATIBLE ENDPOINT
 # ==============================
+
 msgid "menu_openai_endpoint"
 msgstr "OpenAI Compatible Endpoint"
 
