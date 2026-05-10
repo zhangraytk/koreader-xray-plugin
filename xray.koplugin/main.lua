@@ -511,9 +511,15 @@ function XRayPlugin:showLanguageSelection()
                 callback = function() changeLang("es", "Español") end
             }
         },
+        {
+            {
+                text = "简体中文" .. (current_lang == "zh" and " ✓" or ""),
+                callback = function() changeLang("zh", "简体中文") end
+            }
+        },
     }
     
-    self.ldlg = ButtonDialog:new{title = "Language / Dil", buttons = buttons}
+    self.ldlg = ButtonDialog:new{title = self.loc:t("language_title"), buttons = buttons}
     UIManager:show(self.ldlg)
 end
 

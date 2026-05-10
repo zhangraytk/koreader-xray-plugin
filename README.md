@@ -330,12 +330,14 @@ Examples:
 - 🇹🇷 **Turkish** (Türkçe)
 - 🇬🇧 **English**
 - 🇵🇹 **Brazilian Português**
+- 🇨🇳 **Simplified Chinese** (简体中文)
 
 ### AI Data Languages
 AI automatically provides data in the selected interface language:
 - Turkish interface → AI responses in Turkish
 - English interface → AI responses in English
 - Brazilian Português interface → AI responses in Português
+- Simplified Chinese interface → AI responses in Simplified Chinese
 
 ### Adding New Languages
 
