@@ -28,7 +28,11 @@ end
 
 function XRayPlugin:onReaderReady()
     -- Auto-load cache when book is opened
-    self:autoLoadCache()
+    local has_cache = self:autoLoadCache()
+    self:loadBackgroundJob()
+    if not has_cache then
+        self:maybeStartInitialMetadataJob()
+    end
     self:registerAIQuestionHighlightAction()
 end
 
@@ -194,9 +198,105 @@ function XRayPlugin:autoLoadCache()
                    "🎨 " .. #self.themes .. " " .. self.loc:t("themes_loaded"),
             timeout = 3,
         })
+        return true
     else
         logger.info("XRayPlugin: No cache found for auto-load")
     end
+    return false
+end
+
+function XRayPlugin:applyBookData(book_data)
+    self.book_data = book_data
+    self.book_title = book_data.book_title
+    self.author = book_data.author
+    self.author_bio = book_data.author_bio
+    self.author_birth = book_data.author_birth
+    self.author_death = book_data.author_death
+    self.summary = book_data.summary
+    self.characters = book_data.characters or {}
+    self.themes = book_data.themes or {}
+    self.locations = book_data.locations or {}
+    self.timeline = book_data.timeline or {}
+    self.historical_figures = book_data.historical_figures or {}
+    self.author_info = {
+        name = book_data.author,
+        description = book_data.author_bio,
+        birthDate = book_data.author_birth,
+        deathDate = book_data.author_death,
+    }
+    if #self.characters > 0 then
+        self.xray_mode_enabled = true
+    end
+end
+
+function XRayPlugin:getJobManager()
+    if not self.job_manager then
+        local JobManager = require("jobmanager")
+        self.job_manager = JobManager:new()
+    end
+    return self.job_manager
+end
+
+function XRayPlugin:loadBackgroundJob()
+    local job_manager = self:getJobManager()
+    local book_path = self.ui and self.ui.document and self.ui.document.file
+    if not book_path then return end
+    local state = job_manager:loadState(book_path)
+    if state and state.status and state.status ~= "done" and state.status ~= "cancelled" then
+        logger.info("XRayPlugin: Found background job state:", state.status)
+    end
+end
+
+function XRayPlugin:maybeStartInitialMetadataJob()
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local settings = self.ai_helper.settings or {}
+    if settings.auto_metadata_on_open == false then
+        return
+    end
+
+    local book_path = self.ui and self.ui.document and self.ui.document.file
+    if not book_path then return end
+
+    local job_manager = self:getJobManager()
+    local existing_job = job_manager:loadState(book_path)
+    if existing_job and existing_job.status and existing_job.status ~= "done" and existing_job.status ~= "cancelled" then
+        logger.info("XRayPlugin: Initial metadata job skipped; existing job:", existing_job.status)
+        return
+    end
+
+    local selected_provider = self.ai_provider or self.ai_helper.default_provider or "gemini"
+    local provider_config = self.ai_helper.providers[selected_provider]
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
+        logger.info("XRayPlugin: Initial metadata job skipped; provider has no API key")
+        return
+    end
+
+    local props = self.ui.document:getProps() or {}
+    local title = props.title or "Unknown"
+    local author = props.authors or props.author or ""
+    if type(author) == "table" then
+        author = table.concat(author, ", ")
+    elseif type(author) ~= "string" then
+        author = tostring(author or "")
+    end
+
+    job_manager:start(self, {
+        book_path = book_path,
+        title = title,
+        author = author,
+        provider_id = selected_provider,
+        provider_name = provider_config.name or "AI",
+        model = provider_config.model or "",
+        analysis_mode = "metadata",
+        reading_percent = 100,
+        initial_metadata = true,
+        silent = settings.auto_metadata_silent ~= false,
+    })
 end
 
 function XRayPlugin:getMenuCounts()
@@ -410,6 +510,20 @@ function XRayPlugin:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = self.loc:t("menu_enrich_nearby_context"),
+                keep_menu_open = true,
+                callback = function()
+                    self:enrichFromNearbyContext()
+                end,
+            },
+            {
+                text = self.loc:t("menu_background_job"),
+                keep_menu_open = true,
+                callback = function()
+                    self:showBackgroundJobStatus()
+                end,
+            },
+            {
                 text = self.loc:t("menu_ai_settings"),
                 keep_menu_open = true,
                 sub_item_table = {
@@ -461,6 +575,27 @@ function XRayPlugin:addToMainMenu(menu_items)
                         keep_menu_open = true,
                         callback = function()
                             self:setOpenAICompatibleEndpoint()
+                        end,
+                    },
+                    {
+                        text = self.loc:t("menu_custom_providers"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:showCustomProviderMenu()
+                        end,
+                    },
+                    {
+                        text = self.loc:t("menu_auto_metadata"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:toggleAutoMetadataOnOpen()
+                        end,
+                    },
+                    {
+                        text = self.loc:t("menu_context_char_limit"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:setContextCharLimit()
                         end,
                     },
                     { separator = true },
@@ -717,21 +852,50 @@ function XRayPlugin:selectGeminiModel()
         self.ai_helper:init()
     end
 
-    local current_model = "gemini-2.5-flash"
+    local current_model = "gemini-3.1-flash-lite"
     if self.ai_helper.providers and self.ai_helper.providers.gemini then
-        current_model = self.ai_helper.providers.gemini.model or "gemini-2.5-flash"
+        current_model = self.ai_helper.providers.gemini.model or "gemini-3.1-flash-lite"
     end
 
     local ButtonDialog = require("ui/widget/buttondialog")
     local buttons = {
         {
             {
+                text = "Gemini 3.1 Flash-Lite" .. (current_model == "gemini-3.1-flash-lite" and " ✓" or ""),
+                callback = function()
+                    self.ai_helper:setGeminiModel("gemini-3.1-flash-lite")
+                    UIManager:close(self.dlg)
+                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_saved"), timeout = 2})
+                end
+            }
+        },
+        {
+            {
+                text = "Gemini 3 Flash Preview" .. (current_model == "gemini-3-flash-preview" and " ✓" or ""),
+                callback = function()
+                    self.ai_helper:setGeminiModel("gemini-3-flash-preview")
+                    UIManager:close(self.dlg)
+                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_saved"), timeout = 2})
+                end
+            }
+        },
+        {
+            {
+                text = "Gemini 3.1 Pro Preview" .. (current_model == "gemini-3.1-pro-preview" and " ✓" or ""),
+                callback = function()
+                    self.ai_helper:setGeminiModel("gemini-3.1-pro-preview")
+                    UIManager:close(self.dlg)
+                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_saved"), timeout = 2})
+                end
+            }
+        },
+        {
+            {
                 text = "Gemini 2.5 Flash" .. (current_model == "gemini-2.5-flash" and " ✓" or ""),
                 callback = function()
                     self.ai_helper:setGeminiModel("gemini-2.5-flash")
                     UIManager:close(self.dlg)
-                    local InfoMessage = require("ui/widget/infomessage")
-                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_flash_info"), timeout = 2})
+                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_saved"), timeout = 2})
                 end
             }
         },
@@ -741,19 +905,16 @@ function XRayPlugin:selectGeminiModel()
                 callback = function()
                     self.ai_helper:setGeminiModel("gemini-2.5-pro")
                     UIManager:close(self.dlg)
-                    local InfoMessage = require("ui/widget/infomessage")
-                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_pro_info"), timeout = 2})
+                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_saved"), timeout = 2})
                 end
             }
         },
         {
             {
-                text = "Gemini 3 Pro Preview" .. (current_model == "gemini-3-pro-preview" and " ✓" or ""),
+                text = self.loc:t("gemini_custom_model"),
                 callback = function()
-                    self.ai_helper:setGeminiModel("gemini-3-pro-preview")
                     UIManager:close(self.dlg)
-                    local InfoMessage = require("ui/widget/infomessage")
-                    UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_3_pro_info"), timeout = 2})
+                    self:setCustomGeminiModel()
                 end
             }
         },
@@ -765,106 +926,65 @@ function XRayPlugin:selectGeminiModel()
     UIManager:show(self.dlg)
 end
 
+function XRayPlugin:setCustomGeminiModel()
+    local InputDialog = require("ui/widget/inputdialog")
+    local current_model = self.ai_helper.providers.gemini.model or ""
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = self.loc:t("gemini_custom_model"),
+        input = current_model,
+        input_hint = "gemini-3.1-flash-lite",
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function() UIManager:close(input_dialog) end,
+                },
+                {
+                    text = self.loc:t("save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local model = input_dialog:getInputText()
+                        if model and #model > 0 then
+                            self.ai_helper:setGeminiModel(model)
+                            UIManager:show(InfoMessage:new{text = self.loc:t("gemini_model_saved"), timeout = 2})
+                        end
+                        UIManager:close(input_dialog)
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
 function XRayPlugin:fetchFromAI()
     logger.info("XRayPlugin: Fetching AI data")
-    
-    -- 1. WİRELESS KONTROL
-    local NetworkMgr = require("ui/network/manager")
-    
-    if not NetworkMgr:isOnline() then
-        logger.info("XRayPlugin: Network is offline, asking user...")
-        
-        local UIManager = require("ui/uimanager")
-        local ConfirmBox = require("ui/widget/confirmbox")
-        
-        UIManager:show(ConfirmBox:new{
-            text = self.loc:t("network_offline_prompt"),
-            ok_text = self.loc:t("turn_on_wifi"),
-            cancel_text = self.loc:t("cancel"),
-            ok_callback = function()
-                logger.info("XRayPlugin: User chose to turn on WiFi")
-                
-                -- WiFi'yi aç
-                NetworkMgr:turnOnWifi(function()
-                    logger.info("XRayPlugin: WiFi turned on, proceeding with fetch")
-                    -- WiFi açıldıktan sonra spoiler tercihini sor
-                    self:askSpoilerPreference()
-                end)
-            end,
-            cancel_callback = function()
-                logger.info("XRayPlugin: User cancelled WiFi activation")
-                local InfoMessage = require("ui/widget/infomessage")
-                UIManager:show(InfoMessage:new{
-                    text = self.loc:t("fetch_cancelled"),
-                    timeout = 3,
-                })
-            end,
-        })
-        return
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
     end
-    
-    -- WiFi zaten açıksa spoiler tercihini sor
-    self:askSpoilerPreference()
+
+    -- Do not block on KOReader's NetworkMgr:isOnline(): it can be stale on
+    -- devices using local endpoints, proxies, or already-connected Wi-Fi.
+    -- Provider calls still report real transport/API errors later.
+    self:continueWithFetch(100, "metadata")
 end
 
 function XRayPlugin:askSpoilerPreference()
     logger.info("XRayPlugin: Asking spoiler preference")
-    
-    local UIManager = require("ui/uimanager")
-    local Menu = require("ui/widget/menu")
-    local Screen = require("device").screen
-    
-    -- Okuma yüzdesini hesapla
-    local current_page = self.ui:getCurrentPage()
-    local total_pages = self.ui.document:getPageCount()
-    local reading_percent = math.floor((current_page / total_pages) * 100)
-    
-    local spoiler_menu = Menu:new{
-        title = self.loc:t("spoiler_preference_title"),
-        item_table = {
-            {
-                text = string.format(
-                    self.loc:t("spoiler_free_option"),
-                    reading_percent
-                ),
-                callback = function()
-                    logger.info("XRayPlugin: User chose spoiler-free mode")
-                    UIManager:close(spoiler_menu)
-                    self:continueWithFetch(reading_percent)
-                end,
-            },
-            {
-                text = self.loc:t("full_book_option"),
-                callback = function()
-                    logger.info("XRayPlugin: User chose full book mode")
-                    UIManager:close(spoiler_menu)
-                    self:continueWithFetch(100)
-                end,
-            },
-            {
-                text = self.loc:t("cancel"),
-                callback = function()
-                    logger.info("XRayPlugin: User cancelled fetch")
-                    UIManager:close(spoiler_menu)
-                    local InfoMessage = require("ui/widget/infomessage")
-                    UIManager:show(InfoMessage:new{
-                        text = self.loc:t("fetch_cancelled"),
-                        timeout = 3,
-                    })
-                end,
-            },
-        },
-        is_borderless = true,
-        is_popout = false,
-        title_bar_fm_style = true,
-        width = Screen:getWidth(),
-        height = Screen:getHeight(),
-    }
-    
-    UIManager:show(spoiler_menu)
+    self:continueWithFetch(100, "metadata")
 end
 
-function XRayPlugin:continueWithFetch(reading_percent)
+function XRayPlugin:askAnalysisModePreference(reading_percent)
+    logger.info("XRayPlugin: Asking AI analysis mode")
+    self:continueWithFetch(reading_percent or 100, "metadata")
+end
+
+function XRayPlugin:continueWithFetch(reading_percent, analysis_mode)
     logger.info("XRayPlugin: Continuing with fetch process (reading_percent:", reading_percent, ")")
     
     -- 1. Cache Manager Başlat (Kontrol için gerekli)
@@ -878,14 +998,16 @@ function XRayPlugin:continueWithFetch(reading_percent)
     local cache_path = self.cache_manager:getCachePath(book_path)
     local lfs = require("libs/libkoreader-lfs")
     
-    -- Eğer cache dosyası varsa, işlemi durdur ve uyarı ver
+    local existing_data = nil
     if cache_path and lfs.attributes(cache_path) then
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{
-            text = self.loc:t("cache_verify"),
-            timeout = 6,
-        })
-        return 
+        existing_data = self.cache_manager:loadCache(book_path)
+        if analysis_mode == "metadata" then
+            UIManager:show(InfoMessage:new{
+                text = self.loc:t("cache_verify"),
+                timeout = 6,
+            })
+            return
+        end
     end
 
     -- 3. AI Helper Başlat (Eğer cache yoksa devam et)
@@ -896,119 +1018,200 @@ function XRayPlugin:continueWithFetch(reading_percent)
     end
     
     -- Seçili provider'ı al (varsayılan: gemini)
-    local selected_provider = self.ai_provider or self.ai_helper.default_provider or "gemini"
-    local provider_config = self.ai_helper.providers[selected_provider]
-    
-    local title = self.ui.document:getProps().title or "Unknown"
-    local author = self.ui.document:getProps().authors or ""
-    
+    local selected_provider, provider_config = self:getSelectedAIProvider()
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("no_api_key"),
+            timeout = 4,
+        })
+        return
+    end
+
+    local title, author = self:getBookTitleAndAuthor()
+
     -- Model adını seçili provider'a göre al
     local current_model = self.loc:t("unknown_model")
     if provider_config and provider_config.model then
         current_model = provider_config.model
     end
-    
+
     -- Provider adını al
     local provider_name = provider_config and provider_config.name or "AI"
     
-    -- Spoiler durumunu hazırla
-    local spoiler_status = reading_percent < 100 and 
-        string.format(self.loc:t("spoiler_free_mode"), reading_percent) or 
-        self.loc:t("full_book_mode_active")
-    
-    -- 4. Bekleme Mesajı Göster
-    local InfoMessage = require("ui/widget/infomessage")
-    local wait_msg = InfoMessage:new{
-        text = string.format(
-            self.loc:t("fetching_ai") ..
-            self.loc:t("fetching_model") .. "%s\n" ..
-            self.loc:t("book_title") .. "%s\n" ..
-            "%s\n\n" ..
-            self.loc:t("fetching_wait") ..
-            self.loc:t("dont_touch"), 
-            current_model,
-            title,
-            spoiler_status
-        ),
-        timeout = 60,
-    }
-    UIManager:show(wait_msg)
-    
-    -- 5. İşlemi Başlat
-    UIManager:scheduleIn(1.0, function()
-        -- Seçili provider'ı kullan (reading_percent context olarak gönderiliyor)
-        local context = {
-            reading_percent = reading_percent,
-            spoiler_free = reading_percent < 100
-        }
-        
-        local book_data, error_code, error_msg = self.ai_helper:getBookData(title, author, selected_provider, context)
-        
-        if wait_msg then UIManager:close(wait_msg) end
-        
-        if not book_data then
-            local error_text = self.loc:t("error_info") .. "\n\n"
-            if error_code == "error_safety" then
-                error_text = error_text .. self.loc:t("error_filtered")
-            elseif error_code == "error_503" then
-                error_text = error_text .. self.loc:t("error_network_timeout")
-            elseif error_msg then
-                error_text = error_text .. error_msg
-            else
-                error_text = error_text .. self.loc:t("ai_fetch_failed")
-            end
-            
-            UIManager:show(InfoMessage:new{
-                text = error_text,
-                timeout = 7,
-            })
-            return
-        end
-    
-        -- Save data to plugin state
-        self.book_title = book_data.book_title
-        self.author = book_data.author
-        self.author_bio = book_data.author_bio
-        self.author_birth = book_data.author_birth
-        self.author_death = book_data.author_death
-        self.summary = book_data.summary
-        self.characters = book_data.characters or {}
-        self.themes = book_data.themes or {}
-        self.locations = book_data.locations or {}
-        self.timeline = book_data.timeline or {}
-        self.historical_figures = book_data.historical_figures or {}
-        
-        logger.info("XRayPlugin: Found", #self.characters, "characters")
-        logger.info("XRayPlugin: Found", #self.themes, "themes")
-        logger.info("XRayPlugin: Found", #self.locations, "locations")
-        logger.info("XRayPlugin: Found", #self.timeline, "timeline events")
-        logger.info("XRayPlugin: Found", #self.historical_figures, "historical figures")
-        
-        -- Save to cache
-        logger.info("XRayPlugin: Saving to cache")
-        local cache_saved = self.cache_manager:saveCache(book_path, book_data)
-        
-        local cache_msg = cache_saved and self.loc:t("cache_saved") or self.loc:t("cache_save_failed")
-        
-        -- Show detailed success message with proper string.format
-        local success_message = string.format(
-            self.loc:t("ai_fetch_complete"),
-            provider_name,                          -- %s: Provider adı (Google Gemini / ChatGPT)
-            book_data.book_title,                   -- %s: Kitap adı
-            book_data.author,                       -- %s: Yazar
-            #self.characters,                       -- %d: Karakter sayısı
-            #self.locations,                        -- %d: Mekan sayısı
-            #self.themes,                           -- %d: Tema sayısı
-            #self.timeline,                         -- %d: Olay sayısı
-            #self.historical_figures,               -- %d: Tarihi kişilik sayısı
-            cache_msg                               -- %s: Cache mesajı
-        )
-        
+    local job_manager = self:getJobManager()
+    local ok, err = job_manager:start(self, {
+        book_path = book_path,
+        title = title,
+        author = author,
+        provider_id = selected_provider,
+        provider_name = provider_name,
+        model = current_model,
+        analysis_mode = analysis_mode or "metadata",
+        reading_percent = reading_percent,
+        existing_data = existing_data or self.book_data,
+    })
+
+    if not ok then
         UIManager:show(InfoMessage:new{
-            text = success_message,
-            timeout = 10,
+            text = self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or ""),
+            timeout = 5,
         })
-    end)
+    end
+end
+
+function XRayPlugin:getSelectedAIProvider()
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+    local selected_provider = self.ai_provider or self.ai_helper.default_provider or "gemini"
+    local provider_config = self.ai_helper.providers[selected_provider]
+    return selected_provider, provider_config
+end
+
+function XRayPlugin:getBookTitleAndAuthor()
+    local props = {}
+    if self.ui and self.ui.document and type(self.ui.document.getProps) == "function" then
+        local ok, result = pcall(function() return self.ui.document:getProps() end)
+        if ok and type(result) == "table" then
+            props = result
+        end
+    end
+    local title = props.title or self.book_title or "Unknown"
+    local author = props.authors or props.author or self.author or ""
+    if type(author) == "table" then
+        author = table.concat(author, ", ")
+    elseif type(author) ~= "string" then
+        author = tostring(author or "")
+    end
+    return title, author
+end
+
+function XRayPlugin:enrichFromNearbyContext()
+    logger.info("XRayPlugin: Enriching X-Ray from nearby context")
+    if not self.cache_manager then
+        local CacheManager = require("cachemanager")
+        self.cache_manager = CacheManager:new()
+    end
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local selected_provider, provider_config = self:getSelectedAIProvider()
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
+        UIManager:show(InfoMessage:new{text = self.loc:t("no_api_key"), timeout = 4})
+        return
+    end
+
+    local book_path = self.ui and self.ui.document and self.ui.document.file
+    if not book_path then return end
+    local existing_data = self.book_data or self.cache_manager:loadCache(book_path)
+    local title, author = self:getBookTitleAndAuthor()
+    local context_limit = tonumber(self.ai_helper.settings and self.ai_helper.settings.context_char_limit) or 500
+
+    local ok, err = self:getJobManager():start(self, {
+        book_path = book_path,
+        title = title,
+        author = author,
+        provider_id = selected_provider,
+        provider_name = provider_config.name or "AI",
+        model = provider_config.model or "",
+        analysis_mode = "nearby_context",
+        reading_percent = 100,
+        existing_data = existing_data,
+        context_char_limit = context_limit,
+    })
+
+    if not ok then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or ""),
+            timeout = 5,
+        })
+    end
+end
+
+function XRayPlugin:showBackgroundJobStatus()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local TextViewer = require("ui/widget/textviewer")
+    local job_manager = self:getJobManager()
+    local book_path = self.ui and self.ui.document and self.ui.document.file
+    if book_path then
+        job_manager:loadState(book_path)
+    end
+
+    local buttons = {
+        {
+            {
+                text = self.loc:t("background_job_resume"),
+                callback = function()
+                    UIManager:close(self.job_status_dialog)
+                    if not book_path or not job_manager:loadState(book_path) then
+                        UIManager:show(InfoMessage:new{text = self.loc:t("background_job_none"), timeout = 3})
+                        return
+                    end
+                    local ok, err = job_manager:resume(self)
+                    UIManager:show(InfoMessage:new{
+                        text = ok and self.loc:t("background_job_started") or (self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or "")),
+                        timeout = 4,
+                    })
+                end,
+            },
+        },
+        {
+            {
+                text = self.loc:t("background_job_view_prompt"),
+                callback = function()
+                    local prompt, label = job_manager:getPromptPreview()
+                    if not prompt then
+                        prompt, label = job_manager:preparePromptPreview(self)
+                    end
+                    if not prompt then
+                        UIManager:show(InfoMessage:new{text = self.loc:t("background_job_prompt_not_ready"), timeout = 3})
+                        return
+                    end
+                    UIManager:show(TextViewer:new{
+                        title = label or self.loc:t("background_job_view_prompt"),
+                        text = prompt,
+                        justified = false,
+                    })
+                end,
+            },
+        },
+        {
+            {
+                text = self.loc:t("text_extraction_diagnostics"),
+                callback = function()
+                    local TextAnalyzer = require("textanalyzer")
+                    local analyzer = TextAnalyzer:new()
+                    UIManager:show(TextViewer:new{
+                        title = self.loc:t("text_extraction_diagnostics"),
+                        text = analyzer:diagnose(self.ui),
+                        justified = false,
+                    })
+                end,
+            },
+        },
+        {
+            {
+                text = self.loc:t("background_job_cancel"),
+                callback = function()
+                    job_manager:cancel()
+                    if book_path then job_manager:saveState(book_path) end
+                    UIManager:close(self.job_status_dialog)
+                    UIManager:show(InfoMessage:new{text = self.loc:t("background_job_cancel_requested"), timeout = 3})
+                end,
+            },
+        },
+    }
+
+    self.job_status_dialog = ButtonDialog:new{
+        title = self.loc:t("menu_background_job") .. "\n\n" .. job_manager:getStatusText(),
+        buttons = buttons,
+    }
+    UIManager:show(self.job_status_dialog)
 end
 
 function XRayPlugin:showLocations()
@@ -1566,14 +1769,20 @@ function XRayPlugin:selectOpenAIThinkingMode()
         self.ai_helper:init()
     end
 
-    local current = self.ai_helper.providers.chatgpt.thinking_enabled
+    local current = self.ai_helper:getThinkingMode(self.ai_helper.providers.chatgpt)
     local thinking_dialog
-    local function saveThinking(enabled)
-        local success = self.ai_helper:setChatGPTThinking(enabled)
+    local function saveThinking(mode)
+        local success = self.ai_helper:setChatGPTThinking(mode)
         if success then
             self.ai_provider = "chatgpt"
+            local message = self.loc:t("openai_thinking_omitted")
+            if mode == "enabled" then
+                message = self.loc:t("openai_thinking_enabled")
+            elseif mode == "disabled" then
+                message = self.loc:t("openai_thinking_disabled")
+            end
             UIManager:show(InfoMessage:new{
-                text = enabled and self.loc:t("openai_thinking_enabled") or self.loc:t("openai_thinking_disabled"),
+                text = message,
                 timeout = 3,
             })
         end
@@ -1585,14 +1794,20 @@ function XRayPlugin:selectOpenAIThinkingMode()
         buttons = {
             {
                 {
-                    text = self.loc:t("openai_thinking_on") .. (current == true and " ✓" or ""),
-                    callback = function() saveThinking(true) end,
+                    text = self.loc:t("openai_thinking_omit") .. (current == "omit" and " ✓" or ""),
+                    callback = function() saveThinking("omit") end,
                 },
             },
             {
                 {
-                    text = self.loc:t("openai_thinking_off") .. (current == false and " ✓" or ""),
-                    callback = function() saveThinking(false) end,
+                    text = self.loc:t("openai_thinking_on") .. (current == "enabled" and " ✓" or ""),
+                    callback = function() saveThinking("enabled") end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("openai_thinking_off") .. (current == "disabled" and " ✓" or ""),
+                    callback = function() saveThinking("disabled") end,
                 },
             },
         },
@@ -1641,6 +1856,97 @@ function XRayPlugin:selectOpenAIReasoningEffort()
         },
     }
     UIManager:show(effort_dialog)
+end
+
+function XRayPlugin:toggleAutoMetadataOnOpen()
+    local ButtonDialog = require("ui/widget/buttondialog")
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local settings = self.ai_helper.settings or {}
+    local enabled = settings.auto_metadata_on_open ~= false
+    local silent = settings.auto_metadata_silent ~= false
+    local dialog
+    local function save(auto_enabled, silent_enabled)
+        self.ai_helper.settings = self.ai_helper.settings or {}
+        self.ai_helper.settings.auto_metadata_on_open = auto_enabled
+        self.ai_helper.settings.auto_metadata_silent = silent_enabled
+        self.ai_helper:saveRuntimeSetting("auto_metadata_on_open", auto_enabled and "enabled" or "disabled")
+        self.ai_helper:saveRuntimeSetting("auto_metadata_silent", silent_enabled and "enabled" or "disabled")
+        UIManager:close(dialog)
+        UIManager:show(InfoMessage:new{text = self.loc:t("auto_metadata_saved"), timeout = 3})
+    end
+
+    dialog = ButtonDialog:new{
+        title = self.loc:t("menu_auto_metadata"),
+        buttons = {
+            {
+                {
+                    text = self.loc:t("auto_metadata_silent") .. (enabled and silent and " ✓" or ""),
+                    callback = function() save(true, true) end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("auto_metadata_visible") .. (enabled and not silent and " ✓" or ""),
+                    callback = function() save(true, false) end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("auto_metadata_disabled") .. (not enabled and " ✓" or ""),
+                    callback = function() save(false, silent) end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function XRayPlugin:setContextCharLimit()
+    local InputDialog = require("ui/widget/inputdialog")
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local current = tonumber(self.ai_helper.settings and self.ai_helper.settings.context_char_limit) or 500
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = self.loc:t("menu_context_char_limit"),
+        input = tostring(current),
+        input_hint = "500",
+        description = self.loc:t("context_char_limit_desc"),
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function() UIManager:close(input_dialog) end,
+                },
+                {
+                    text = self.loc:t("save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local value = tonumber(input_dialog:getInputText())
+                        if value then
+                            value = math.max(100, math.min(5000, math.floor(value)))
+                            self.ai_helper.settings = self.ai_helper.settings or {}
+                            self.ai_helper.settings.context_char_limit = value
+                            self.ai_helper:saveRuntimeSetting("context_char_limit", value)
+                            UIManager:show(InfoMessage:new{text = string.format(self.loc:t("context_char_limit_saved"), value), timeout = 3})
+                        end
+                        UIManager:close(input_dialog)
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
 end
 
 function XRayPlugin:setOpenAICompatibleEndpoint()
@@ -1693,6 +1999,156 @@ function XRayPlugin:setOpenAICompatibleEndpoint()
     input_dialog:onShowKeyboard()
 end
 
+function XRayPlugin:showCustomProviderMenu()
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local provider_menu
+    local items = {
+        {
+            text = self.loc:t("custom_provider_add"),
+            callback = function()
+                if provider_menu then UIManager:close(provider_menu) end
+                self:showCustomProviderEditor()
+            end,
+        },
+    }
+
+    for id, provider in pairs(self.ai_helper.providers) do
+        if id:match("^custom:") then
+            table.insert(items, {
+                text = (provider.name or id) .. "\n" .. (provider.endpoint or "") .. "\n" .. (provider.model or ""),
+                callback = function()
+                    if provider_menu then UIManager:close(provider_menu) end
+                    self:showCustomProviderActions(id)
+                end,
+            })
+        end
+    end
+
+    provider_menu = Menu:new{
+        title = self.loc:t("menu_custom_providers"),
+        item_table = items,
+        is_borderless = true,
+        is_popout = false,
+        title_bar_fm_style = true,
+        width = Screen:getWidth(),
+        height = Screen:getHeight(),
+    }
+    UIManager:show(provider_menu)
+end
+
+function XRayPlugin:showCustomProviderActions(provider_id)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local provider = self.ai_helper.providers[provider_id]
+    if not provider then return end
+    local dialog
+    dialog = ButtonDialog:new{
+        title = provider.name or provider_id,
+        buttons = {
+            {
+                {
+                    text = self.loc:t("provider_select_title"),
+                    callback = function()
+                        self.ai_provider = provider_id
+                        self.ai_helper:setDefaultProvider(provider_id)
+                        UIManager:close(dialog)
+                        UIManager:show(InfoMessage:new{text = string.format(self.loc:t("provider_selected"), provider.name or provider_id), timeout = 2})
+                    end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("custom_provider_edit"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        self:showCustomProviderEditor(provider_id)
+                    end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("delete"),
+                    callback = function()
+                        self.ai_helper:deleteCustomProvider(provider_id)
+                        UIManager:close(dialog)
+                        UIManager:show(InfoMessage:new{text = self.loc:t("custom_provider_deleted"), timeout = 2})
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function XRayPlugin:showCustomProviderEditor(provider_id)
+    local InputDialog = require("ui/widget/inputdialog")
+    local provider = provider_id and self.ai_helper.providers[provider_id] or {}
+    local thinking_mode = self.ai_helper:getThinkingMode(provider)
+    local current = table.concat({
+        provider.name or "Custom Provider",
+        provider.endpoint or "https://api.openai.com/v1/chat/completions",
+        provider.model or "gpt-4o-mini",
+        provider.api_key or "",
+        thinking_mode,
+        provider.reasoning_effort or "high",
+    }, "|")
+
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = provider_id and self.loc:t("custom_provider_edit") or self.loc:t("custom_provider_add"),
+        input = current,
+        input_hint = "Name|Endpoint|Model|APIKey|thinking|effort",
+        description = self.loc:t("custom_provider_editor_desc"),
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function() UIManager:close(input_dialog) end,
+                },
+                {
+                    text = self.loc:t("save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local raw = input_dialog:getInputText() or ""
+                        local fields = {}
+                        raw = raw .. "|"
+                        for field in raw:gmatch("(.-)|") do
+                            table.insert(fields, field)
+                            if #fields >= 6 then break end
+                        end
+                        local thinking = self.ai_helper:normalizeThinkingMode(fields[5])
+                        local _, thinking_mode_value = self.ai_helper:normalizeThinkingMode(fields[5])
+                        local data = {
+                            name = fields[1],
+                            endpoint = fields[2],
+                            model = fields[3],
+                            api_key = fields[4],
+                            thinking_mode = thinking_mode_value,
+                            thinking_enabled = thinking,
+                            reasoning_effort = fields[6] or "high",
+                        }
+                        if provider_id then
+                            self.ai_helper:updateCustomProvider(provider_id, data)
+                        else
+                            provider_id = self.ai_helper:createCustomProvider(data)
+                        end
+                        self.ai_provider = provider_id or self.ai_provider
+                        if provider_id then self.ai_helper:setDefaultProvider(provider_id) end
+                        UIManager:close(input_dialog)
+                        UIManager:show(InfoMessage:new{text = self.loc:t("custom_provider_saved"), timeout = 2})
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
 function XRayPlugin:selectAIProvider()
     if not self.ai_helper then
         local AIHelper = require("aihelper")
@@ -1704,74 +2160,38 @@ function XRayPlugin:selectAIProvider()
         self.ai_provider = self.ai_helper.default_provider
     end
     
-    -- 1. ADIM: Değişkeni burada önceden tanımlıyoruz (henüz boş)
-    local provider_menu 
-
+    local provider_menu
     local providers = {}
-    
-    local gemini_key = self.ai_helper.providers.gemini and self.ai_helper.providers.gemini.api_key
-    if gemini_key and gemini_key ~= "" then
-        table.insert(providers, {
-            text = "✅ Google Gemini (" .. (self.loc:getLanguage() == "tr" and "Aktif" or "Active") .. ": " .. (self.ai_provider == "gemini" and (self.loc:getLanguage() == "tr" and "EVET" or "YES") or (self.loc:getLanguage() == "tr" and "HAYIR" or "NO")) .. ")",
-            callback = function()
-                self.ai_provider = "gemini"
-                self.ai_helper:setDefaultProvider("gemini")
-                UIManager:show(InfoMessage:new{
-                    text = self.loc:t("gemini_selected"), 
-                    timeout = 2,
-                })
-                
-                -- 3. ADIM: Artık provider_menu dolu olduğu için bu satır çalışır
-                if provider_menu then
-                    UIManager:close(provider_menu)
-                end
-            end,
-        })
-    else
-        table.insert(providers, {
-            text = "❌ Google Gemini (" .. (self.loc:getLanguage() == "tr" and "API key yok" or "No API key") .. ")",
-            callback = function()
-                UIManager:show(InfoMessage:new{
-                    text = self.loc:t("set_key_first"), 
-                    timeout = 3,
-                })
-            end,
-        })
+
+    local ids = {}
+    for id in pairs(self.ai_helper.providers) do
+        table.insert(ids, id)
     end
-    
-    local chatgpt_key = self.ai_helper.providers.chatgpt and self.ai_helper.providers.chatgpt.api_key
-    if chatgpt_key and chatgpt_key ~= "" then
-        table.insert(providers, {
-            text = "✅ ChatGPT (" .. (self.loc:getLanguage() == "tr" and "Aktif" or "Active") .. ": " .. (self.ai_provider == "chatgpt" and (self.loc:getLanguage() == "tr" and "EVET" or "YES") or (self.loc:getLanguage() == "tr" and "HAYIR" or "NO")) .. ")",
-            callback = function()
-                self.ai_provider = "chatgpt"
-                self.ai_helper:setDefaultProvider("chatgpt")
-                UIManager:show(InfoMessage:new{
-                    text = self.loc:t("chatgpt_selected"), 
-                    timeout = 2,
-                })
-                
-                -- 3. ADIM: Burada da menüyü kapatıyoruz
-                if provider_menu then
-                    UIManager:close(provider_menu)
-                end
-            end,
-        })
-    else
-        table.insert(providers, {
-            text = "❌ ChatGPT (" .. (self.loc:getLanguage() == "tr" and "API key yok" or "No API key") .. ")",
-            callback = function()
-                UIManager:show(InfoMessage:new{
-                    text = self.loc:t("set_key_first"), 
-                    timeout = 3,
-                })
-            end,
-        })
+    table.sort(ids)
+
+    for _, id in ipairs(ids) do
+        local provider = self.ai_helper.providers[id]
+        if provider and provider.enabled ~= false then
+            local has_key = provider.api_key and #provider.api_key > 0
+            local active = self.ai_provider == id or self.ai_helper.default_provider == id
+            table.insert(providers, {
+                text = (has_key and "✅ " or "❌ ") .. (provider.name or id) .. " - " .. (provider.model or "") .. (active and " ✓" or ""),
+                callback = function()
+                    if not has_key then
+                        UIManager:show(InfoMessage:new{text = self.loc:t("set_key_first"), timeout = 3})
+                        return
+                    end
+                    self.ai_provider = id
+                    self.ai_helper:setDefaultProvider(id)
+                    UIManager:show(InfoMessage:new{text = string.format(self.loc:t("provider_selected"), provider.name or id), timeout = 2})
+                    if provider_menu then UIManager:close(provider_menu) end
+                end,
+            })
+        end
     end
-    
-    -- 2. ADIM: Daha önce tanımladığımız değişkene atama yapıyoruz (başındaki 'local' ifadesini kaldırdık)
+
     provider_menu = Menu:new{
-        title = self.loc:t("provider_select_title"), 
+        title = self.loc:t("provider_select_title"),
         item_table = providers,
         is_borderless = true,
         is_popout = false,
@@ -2303,10 +2723,19 @@ function XRayPlugin:showQuickXRayMenu()
         },
         {
             {
-                text = self.loc:t("fetch_data"),
+                text = self.loc:t("menu_fetch_ai"),
                 callback = function()
                     UIManager:close(self.quick_dialog)
                     self:fetchFromAI()
+                end,
+            },
+        },
+        {
+            {
+                text = self.loc:t("menu_enrich_nearby_context"),
+                callback = function()
+                    UIManager:close(self.quick_dialog)
+                    self:enrichFromNearbyContext()
                 end,
             },
         },

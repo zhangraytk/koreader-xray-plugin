@@ -10,7 +10,7 @@ Transform your reading experience with AI-powered book analysis, just like Amazo
 
 ## 🎯 What is X-Ray Plugin?
 
-X-Ray Plugin brings Amazon Kindle's beloved X-Ray feature to KOReader. Using advanced AI technology (Google Gemini or ChatGPT), it automatically extracts and organizes content while ensuring a spoiler-free experience:
+X-Ray Plugin brings Amazon Kindle's beloved X-Ray feature to KOReader. Using Google Gemini or OpenAI-compatible chat APIs, it automatically extracts and organizes book context while keeping the data local after it is generated:
 
     👥 Characters - Names, descriptions, roles, occupations
 
@@ -36,11 +36,14 @@ All data is cached locally for offline use and works without internet after the 
 
 ### 🤖 AI Integration
 
-- **Google Gemini 2.5 Flash** (FREE, recommended)
-- **Google Gemini 2.5 Pro** (optional, more detailed)
-- **ChatGPT (GPT-3.5 Turbo)** (paid, OpenAI)
+- **Google Gemini 3.1 Flash-Lite / 3 Flash / 3.1 Pro Preview** with Gemini 2.5 fallback options
+- **OpenAI-compatible chat completions** including OpenAI, local gateways, proxies, and self-hosted compatible servers
+- **Custom providers** with per-provider endpoint, model, API key, thinking mode, and reasoning effort
+- **AI Q&A** from the X-Ray menu or selected text highlight dialog
+- **Background AI jobs** so analysis can continue while you read
+- **Nearby-context enrichment** to improve character data from the current reading position
 - Smart JSON parsing with error recovery
-- Language-aware prompts (Turkish/English/Português etc.)
+- Language-aware prompts (Turkish/English/Português/Simplified Chinese etc.)
 
 ### 👥 Character Management
 
@@ -66,6 +69,7 @@ All data is cached locally for offline use and works without internet after the 
 - **Offline usage**: Internet only needed for initial fetch
 - **Per-book storage**: Each book has its own cache
 - **Auto-load**: Cache loads automatically when opening a book
+- **Cache v7 metadata**: Stores provider, model, analysis mode, and source stats for generated data
 - **🌍 Multi-Language Support**: Interface + AI prompts
 
 ---
@@ -104,8 +108,9 @@ cp -r xray.koplugin ~/.config/koreader/plugins/
 ### 4. Fetch Your First Book
 
 1. Go to **Menu → X-Ray → Fetch AI Data** (veya "AI ile Bilgi Çek")
-2. Wait 10-15 seconds
-3. Done! All data is now cached offline ✨
+2. The analysis starts as a background job
+3. Continue reading or open **Menu → X-Ray → Background AI job** to view status, prompt preview, diagnostics, resume, or cancel
+4. Done! All data is now cached offline ✨
 
 ---
 
@@ -159,6 +164,32 @@ Menu → X-Ray → My Character Notes
 - Edit or delete existing notes
 - Notes saved per book
 
+#### 🤖 AI Q&A
+```
+Menu → X-Ray → AI Q&A
+Highlight dialog → AI Q&A
+```
+- Ask questions about the current book
+- Ask about selected text directly from the highlight dialog
+- Uses the currently selected AI provider and model
+
+#### 🔍 Enrich from Nearby Context
+```
+Menu → X-Ray → Enrich characters from nearby context
+```
+- Extracts text near the current reading position
+- Sends a compact context window to AI
+- Merges useful new character details with existing cached X-Ray data
+
+#### ⏳ Background AI Job
+```
+Menu → X-Ray → Background AI job
+```
+- Shows current stage, provider, model, text source, and progress
+- Lets you preview the prompt generated for the AI request
+- Provides text extraction diagnostics
+- Supports cancellation and resume for resumable job state
+
 ### Advanced Features
 
 #### 🌍 Change Language
@@ -176,6 +207,19 @@ Menu → X-Ray → Clear Cache
 - Delete all cached data for current book
 - Useful for re-fetching updated data
 - Requires confirmation dialog
+
+#### ⚙️ AI Provider Settings
+```
+Menu → X-Ray → AI Settings
+```
+- Set Gemini and OpenAI-compatible API keys
+- Choose Gemini or OpenAI-compatible models
+- Configure OpenAI-compatible endpoint URL
+- Choose thinking mode: omit, enabled, or disabled
+- Set reasoning effort for compatible providers
+- Add, edit, delete, and select custom providers
+- Configure automatic X-Ray seed generation when a book opens
+- Configure the nearby-context character limit
 
 ---
 
@@ -200,20 +244,40 @@ return {
     -- API Keys
     gemini_api_key = "AIzaSy...",
     chatgpt_api_key = "sk-...",
+
     -- Optional: OpenAI-compatible endpoint
     -- Example: "https://your-host/v1/chat/completions"
     chatgpt_endpoint = "https://api.openai.com/v1/chat/completions",
-    
+    chatgpt_model = "gpt-4o-mini",
+    chatgpt_thinking_mode = "omit", -- "omit", "enabled", or "disabled"
+    chatgpt_reasoning_effort = "high", -- "high" or "max"
+
     -- Default AI Provider
     default_provider = "gemini",  -- or "chatgpt"
-    
+
     -- Gemini Model Selection
-    gemini_model = "gemini-2.5-flash",  -- or "gemini-2.5-pro"
-    
+    gemini_model = "gemini-3.1-flash-lite",
+
+    -- Optional additional OpenAI-compatible providers
+    custom_providers = {
+        ["custom:local"] = {
+            name = "Local LLM",
+            endpoint = "http://localhost:8000/v1/chat/completions",
+            model = "gpt-4o-mini",
+            api_key = "",
+            thinking_mode = "omit",
+            reasoning_effort = "high",
+        },
+    },
+
     -- Settings
     settings = {
-        auto_load_cache = true,
-        show_gender_icons = true,
+        auto_fetch_on_open = false,
+        auto_metadata_on_open = true,
+        auto_metadata_silent = true,
+        context_char_limit = 500,
+        cache_duration_days = -1,
+        max_characters = 20,
     }
 }
 ```
@@ -226,13 +290,22 @@ return {
 │   └── book_hash_*.json
 ├── settings/xray/              # Plugin settings
 │   ├── language.txt            # Selected language
+│   ├── *_api_key.txt           # Saved provider keys
+│   ├── *_model.txt             # Saved model preferences
+│   ├── custom_providers.json   # Custom OpenAI-compatible providers
 │   └── notes/                  # Character notes
 │       └── book_hash_*.json
+├── <book sidecar>/             # KOReader per-book sidecar directory
+│   ├── xray_cache.lua          # X-Ray cache
+│   ├── xray_notes.lua          # Character notes
+│   └── xray_job_state.lua      # Background job state
 └── plugins/xray.koplugin/      # Plugin files
     ├── main.lua
     ├── localization.lua
     ├── aihelper.lua
     ├── cachemanager.lua
+    ├── jobmanager.lua
+    ├── textanalyzer.lua
     ├── chapteranalyzer.lua
     ├── characternotes.lua
     └── config.lua (optional)
@@ -248,6 +321,8 @@ return {
 2. **Include author name**: Helps AI identify the correct book
 3. **Gemini Flash is great**: Free, fast, and accurate for most books
 4. **Cache once, use forever**: No need to re-fetch unless you want updates
+5. **Use nearby enrichment after you meet new characters**: It can improve cached data from your current reading position
+6. **Use custom providers for local or proxy models**: Any OpenAI-compatible chat completions endpoint can be configured
 
 ### Character Search Tips
 
@@ -359,8 +434,10 @@ AI automatically provides data in the selected interface language:
 ```
 main.lua           → Plugin core, menu management
 localization.lua   → Multi-language support
-aihelper.lua       → AI integration (Gemini/ChatGPT)
+aihelper.lua       → AI integration (Gemini/OpenAI-compatible)
 cachemanager.lua   → Cache storage and retrieval
+jobmanager.lua     → Background AI job state and execution
+textanalyzer.lua   → Local text extraction, chunking, and character candidates
 chapteranalyzer.lua → Chapter text analysis
 characternotes.lua → Personal notes management
 ```
@@ -369,9 +446,11 @@ characternotes.lua → Personal notes management
 
 | Model | Cost | Speed | Quality | Token Limit |
 |-------|------|-------|---------|-------------|
-| Gemini 2.5 Flash | FREE | Fast | Good | 8K |
-| Gemini 2.5 Pro | FREE | Medium | Excellent | 8K |
-| GPT-3.5 Turbo | Paid | Fast | Good | 4K |
+| Gemini 3.1 Flash-Lite | Provider-dependent | Fast | Good | Provider limit |
+| Gemini 3 Flash Preview | Provider-dependent | Fast | Good | Provider limit |
+| Gemini 3.1 Pro Preview | Provider-dependent | Medium | Excellent | Provider limit |
+| Gemini 2.5 Flash / Pro | Provider-dependent | Fast/Medium | Good/Excellent | Provider limit |
+| OpenAI-compatible models | Provider-dependent | Varies | Varies | Provider limit |
 
 ### Cache Format
 
@@ -380,6 +459,12 @@ characternotes.lua → Personal notes management
   "book_title": "Crime and Punishment",
   "author": "Fyodor Dostoevsky",
   "cached_at": 1735563600,
+  "cache_version": "7.0",
+  "analysis_mode": "metadata",
+  "provider_id": "gemini",
+  "provider_name": "Google Gemini",
+  "model": "gemini-3.1-flash-lite",
+  "source_stats": {},
   "characters": [...],
   "locations": [...],
   "timeline": [...],
@@ -412,7 +497,16 @@ A: No! AI is explicitly instructed to avoid spoilers.
 A: AI will try its best. You can also manually edit cache files.
 
 **Q: Can I edit the data?**
-A: Yes, cache files are JSON. Edit with any text editor.
+A: Yes, cache files are Lua tables stored next to the book by KOReader document settings. Edit carefully with any text editor.
+
+**Q: Can I use a local LLM or proxy?**
+A: Yes. Configure an OpenAI-compatible endpoint, or add a custom provider with its own endpoint, model, and API key.
+
+**Q: What does "thinking mode" do?**
+A: It controls whether OpenAI-compatible requests send a `thinking` parameter. Use "omit" for maximum compatibility.
+
+**Q: What is automatic X-Ray seed generation?**
+A: When enabled, opening a book with no cache can start a quiet, lightweight title/author analysis job if an API key is available.
 
 **Q: Does it support graphic novels?**
 A: Not yet. Text-based books only.
@@ -435,6 +529,14 @@ A: Yes! See Contributing section below.
 - Verify API key is correct (copy-paste from provider)
 - Try clearing and re-entering API key
 - Check API quota (Gemini free tier has limits)
+- For OpenAI-compatible servers, verify endpoint ends with `/v1/chat/completions` or let the plugin normalize a base URL
+- Try setting thinking mode to "omit" if the server rejects extra compatibility parameters
+
+### Background job failed
+- Open **Menu → X-Ray → Background AI job**
+- Review status, prompt preview, and text extraction diagnostics
+- Resume the job if it stopped before completion
+- Cancel and retry with light metadata mode if local text extraction is unavailable for the document
 
 ### "No characters found in chapter"
 - Make sure you're in a chapter (not title page)
@@ -454,7 +556,10 @@ A: Yes! See Contributing section below.
 ## 🎯 Roadmap
 
 ### Planned Features
-- [ ] More AI providers (Claude, local LLMs)
+- [x] OpenAI-compatible and custom providers
+- [x] AI Q&A from menu and selected text
+- [x] Background analysis jobs
+- [x] Nearby-context character enrichment
 - [ ] Character relationship graph
 - [ ] Custom AI prompts
 - [ ] Quote extraction

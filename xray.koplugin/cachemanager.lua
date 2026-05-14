@@ -70,7 +70,7 @@ function CacheManager:saveCache(book_path, data)
     
     -- Add timestamp
     data.cached_at = os.time()
-    data.cache_version = "6.0"
+    data.cache_version = "7.0"
     
     -- Serialize data
     local success, err = pcall(function()
@@ -90,7 +90,7 @@ function CacheManager:saveCache(book_path, data)
             return false
         end
         
-        f:write("-- X-Ray Cache v6.0\n")
+        f:write("-- X-Ray Cache v7.0\n")
         f:write("-- Generated: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n\n")
         f:write("return " .. serialized_data)
         f:close()
@@ -137,9 +137,16 @@ function CacheManager:loadCache(book_path)
     end
     
     -- Check cache version
-    if data.cache_version ~= "6.0" then
+    if data.cache_version ~= "7.0" and data.cache_version ~= "6.0" then
         logger.warn("CacheManager: Cache version mismatch, ignoring")
         return nil
+    end
+
+    if data.cache_version == "6.0" then
+        data.analysis_mode = data.analysis_mode or "metadata"
+        data.provider_id = data.provider_id or "unknown"
+        data.provider_name = data.provider_name or "AI"
+        data.source_stats = data.source_stats or {}
     end
     
     -- Cache age check removed - cache is now永久 (永久 = permanent)

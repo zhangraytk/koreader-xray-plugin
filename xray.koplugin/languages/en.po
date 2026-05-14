@@ -848,3 +848,161 @@ msgstr "AI API key is not set.\n\nSet it in Menu → X-Ray → AI Settings."
 
 msgid "ai_qa_failed"
 msgstr "AI Q&A failed."
+
+# ==============================
+# AI BACKGROUND AND CONTEXT
+# ==============================
+
+msgid "menu_enrich_nearby_context"
+msgstr "Enrich characters from nearby context"
+
+msgid "menu_background_job"
+msgstr "Background AI job"
+
+msgid "background_job_started"
+msgstr "AI analysis is running in the background. You can continue reading."
+
+msgid "background_job_done"
+msgstr "AI analysis complete. X-Ray data is ready."
+
+msgid "background_job_failed"
+msgstr "AI analysis failed."
+
+msgid "background_job_cancel"
+msgstr "Cancel current job"
+
+msgid "background_job_cancelled"
+msgstr "AI analysis cancelled."
+
+msgid "background_job_cancel_requested"
+msgstr "Cancel requested. The current network request may finish first."
+
+msgid "background_job_resume"
+msgstr "Resume job"
+
+msgid "background_job_none"
+msgstr "No background job found."
+
+msgid "background_job_view_prompt"
+msgstr "View prompt"
+
+msgid "background_job_prompt_not_ready"
+msgstr "Prompt is not ready yet. It will appear after scanning starts an AI request."
+
+msgid "text_extraction_diagnostics"
+msgstr "Text extraction diagnostics"
+
+msgid "menu_auto_metadata"
+msgstr "Auto X-Ray seed on book open"
+
+msgid "auto_metadata_silent"
+msgstr "On, silent"
+
+msgid "auto_metadata_visible"
+msgstr "On, show notifications"
+
+msgid "auto_metadata_disabled"
+msgstr "Off"
+
+msgid "auto_metadata_saved"
+msgstr "Auto X-Ray seed setting saved"
+
+msgid "menu_context_char_limit"
+msgstr "Nearby context length"
+
+msgid "context_char_limit_desc"
+msgstr "Characters of nearby reading context used when enriching characters from the current position. Default: 500."
+
+msgid "context_char_limit_saved"
+msgstr "Nearby context length saved: %d"
+
+# ==============================
+# OPENAI-COMPATIBLE PROVIDERS
+# ==============================
+
+msgid "menu_openai_model"
+msgstr "OpenAI-compatible model"
+
+msgid "openai_model_title"
+msgstr "OpenAI-compatible model"
+
+msgid "openai_model_hint"
+msgstr "Model name"
+
+msgid "openai_model_desc"
+msgstr "Use the exact model name exposed by your OpenAI-compatible server."
+
+msgid "openai_model_saved"
+msgstr "OpenAI-compatible model saved"
+
+msgid "menu_openai_thinking"
+msgstr "Thinking mode"
+
+msgid "openai_thinking_title"
+msgstr "Thinking mode"
+
+msgid "openai_thinking_omit"
+msgstr "Omit parameter"
+
+msgid "openai_thinking_on"
+msgstr "Enabled"
+
+msgid "openai_thinking_off"
+msgstr "Disabled"
+
+msgid "openai_thinking_omitted"
+msgstr "Thinking parameter will be omitted"
+
+msgid "openai_thinking_enabled"
+msgstr "Thinking mode enabled"
+
+msgid "openai_thinking_disabled"
+msgstr "Thinking mode disabled"
+
+msgid "menu_openai_effort"
+msgstr "Thinking effort"
+
+msgid "openai_effort_title"
+msgstr "Thinking effort"
+
+msgid "openai_effort_saved"
+msgstr "Thinking effort saved: %s"
+
+msgid "provider_selected"
+msgstr "%s selected"
+
+msgid "gemini_model_saved"
+msgstr "Gemini model saved"
+
+msgid "gemini_custom_model"
+msgstr "Custom Gemini model"
+
+msgid "menu_custom_providers"
+msgstr "Custom providers"
+
+msgid "custom_provider_add"
+msgstr "Add custom provider"
+
+msgid "custom_provider_edit"
+msgstr "Edit provider"
+
+msgid "custom_provider_saved"
+msgstr "Provider saved"
+
+msgid "custom_provider_deleted"
+msgstr "Provider deleted"
+
+msgid "custom_provider_editor_desc"
+msgstr "Enter fields separated by | as: Name|Endpoint|Model|APIKey|thinking(omit/enabled/disabled)|effort(high/max)"
+
+msgid "analysis_mode_title"
+msgstr "AI analysis mode"
+
+msgid "analysis_mode_metadata"
+msgstr "Light mode (title only)"
+
+msgid "analysis_mode_local_candidates"
+msgstr "Local candidate boost"
+
+msgid "analysis_mode_chunked"
+msgstr "Chunked text boost"

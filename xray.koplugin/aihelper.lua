@@ -13,16 +13,18 @@ local AIHelper = {}
 AIHelper.providers = {
     gemini = {
         name = "Google Gemini",
+        type = "gemini",
         enabled = true,
         api_key = nil,
-        model = "gemini-2.5-flash", -- Default model
+        model = "gemini-3.1-flash-lite",
     },
     chatgpt = {
-        name = "ChatGPT",
+        name = "OpenAI Compatible",
+        type = "openai_compatible",
         enabled = true,
         api_key = nil,
         endpoint = "https://api.openai.com/v1/chat/completions",
-        model = "gpt-4o-mini", -- Varsayılan model (uygun maliyet/performans)
+        model = "gpt-4o-mini",
         thinking_enabled = nil,
         reasoning_effort = "high",
     }
@@ -39,6 +41,115 @@ function AIHelper:normalizeReasoningEffort(effort)
         return "max"
     end
     return nil
+end
+
+function AIHelper:normalizeThinkingMode(value)
+    if type(value) == "string" then
+        value = self:trimText(value):lower()
+        if value == "enabled" or value == "true" or value == "on" or value == "yes" then
+            return true, "enabled"
+        elseif value == "disabled" or value == "false" or value == "off" or value == "no" then
+            return false, "disabled"
+        elseif value == "omit" or value == "none" or value == "default" or value == "" then
+            return nil, "omit"
+        end
+    elseif value == true then
+        return true, "enabled"
+    elseif value == false then
+        return false, "disabled"
+    elseif value == nil then
+        return nil, "omit"
+    end
+    return nil, "omit"
+end
+
+function AIHelper:getThinkingMode(provider)
+    provider = provider or {}
+    if provider.thinking_enabled == true then
+        return "enabled"
+    elseif provider.thinking_enabled == false then
+        return "disabled"
+    end
+    return "omit"
+end
+
+function AIHelper:trimText(text)
+    if type(text) ~= "string" then return "" end
+    return text:match("^%s*(.-)%s*$") or ""
+end
+
+function AIHelper:ensureSettingsDir()
+    local DataStorage = require("datastorage")
+    local settings_dir = DataStorage:getSettingsDir()
+    local xray_dir = settings_dir .. "/xray"
+    local lfs = require("libs/libkoreader-lfs")
+    lfs.mkdir(xray_dir)
+    return xray_dir
+end
+
+function AIHelper:loadRuntimeSettingsFromFile()
+    self.settings = self.settings or {}
+    local xray_dir = self:ensureSettingsDir()
+
+    local auto_file = io.open(xray_dir .. "/auto_metadata_on_open.txt", "r")
+    if auto_file then
+        local value = auto_file:read("*a"):match("^%s*(.-)%s*$")
+        auto_file:close()
+        if value == "enabled" or value == "true" then
+            self.settings.auto_metadata_on_open = true
+        elseif value == "disabled" or value == "false" then
+            self.settings.auto_metadata_on_open = false
+        end
+    end
+
+    local silent_file = io.open(xray_dir .. "/auto_metadata_silent.txt", "r")
+    if silent_file then
+        local value = silent_file:read("*a"):match("^%s*(.-)%s*$")
+        silent_file:close()
+        if value == "enabled" or value == "true" then
+            self.settings.auto_metadata_silent = true
+        elseif value == "disabled" or value == "false" then
+            self.settings.auto_metadata_silent = false
+        end
+    end
+
+    local context_file = io.open(xray_dir .. "/context_char_limit.txt", "r")
+    if context_file then
+        local value = tonumber(context_file:read("*a"):match("^%s*(.-)%s*$"))
+        context_file:close()
+        if value and value >= 100 then
+            self.settings.context_char_limit = math.min(5000, math.floor(value))
+        end
+    end
+end
+
+function AIHelper:saveRuntimeSetting(name, value)
+    local xray_dir = self:ensureSettingsDir()
+    local file = io.open(xray_dir .. "/" .. name .. ".txt", "w")
+    if not file then return false end
+    file:write(tostring(value))
+    file:close()
+    return true
+end
+
+function AIHelper:normalizeProviderId(id)
+    id = self:trimText(id)
+    if #id == 0 then return nil end
+    id = id:gsub("%s+", "_"):gsub("[^%w_:%-]", "")
+    if #id == 0 then return nil end
+    return id
+end
+
+function AIHelper:getProvider(provider_id)
+    provider_id = provider_id or self.default_provider or "gemini"
+    if provider_id == "openai" then provider_id = "chatgpt" end
+    local provider = self.providers[provider_id]
+    if provider then return provider_id, provider end
+    return nil, nil
+end
+
+function AIHelper:isOpenAICompatibleProvider(provider)
+    return provider and (provider.type == "openai_compatible" or provider.endpoint)
 end
 
 -- Set Gemini model
@@ -59,10 +170,10 @@ function AIHelper:setChatGPTModel(model_name)
     return true
 end
 
-function AIHelper:setChatGPTThinking(enabled)
-    if enabled ~= true and enabled ~= false then return false end
+function AIHelper:setChatGPTThinking(mode)
+    local enabled, normalized = self:normalizeThinkingMode(mode)
     self.providers.chatgpt.thinking_enabled = enabled
-    return self:saveProviderSettingToFile("chatgpt", "thinking_enabled", enabled and "enabled" or "disabled")
+    return self:saveProviderSettingToFile("chatgpt", "thinking_enabled", normalized)
 end
 
 function AIHelper:setChatGPTReasoningEffort(effort)
@@ -74,8 +185,9 @@ end
 
 -- Set default provider 
 function AIHelper:setDefaultProvider(provider_name)
-    if not provider_name or (provider_name ~= "gemini" and provider_name ~= "chatgpt") then 
-        return false 
+    provider_name = provider_name == "openai" and "chatgpt" or provider_name
+    if not provider_name or not self.providers[provider_name] then
+        return false
     end
     self.default_provider = provider_name
     self:saveProviderToConfig(provider_name)
@@ -125,6 +237,7 @@ end
 -- Initialize AIHelper
 function AIHelper:init()
     self:loadConfig()
+    self:loadRuntimeSettingsFromFile()
     self:loadModelFromFile()
     self:loadLanguage()
     logger.info("AIHelper: Initialized with Gemini model:", self.providers.gemini.model)
@@ -140,14 +253,36 @@ function AIHelper:loadConfig()
         if config.chatgpt_api_key then self.providers.chatgpt.api_key = config.chatgpt_api_key end
         if config.chatgpt_model then self.providers.chatgpt.model = config.chatgpt_model end
         if config.chatgpt_endpoint then self.providers.chatgpt.endpoint = config.chatgpt_endpoint end
-        if config.chatgpt_thinking_enabled ~= nil then self.providers.chatgpt.thinking_enabled = config.chatgpt_thinking_enabled == true end
+        if config.openai_compatible_name then self.providers.chatgpt.name = config.openai_compatible_name end
+        if config.chatgpt_thinking_mode ~= nil then
+            local enabled = self:normalizeThinkingMode(config.chatgpt_thinking_mode)
+            self.providers.chatgpt.thinking_enabled = enabled
+        elseif config.chatgpt_thinking_enabled ~= nil then
+            local enabled = self:normalizeThinkingMode(config.chatgpt_thinking_enabled)
+            self.providers.chatgpt.thinking_enabled = enabled
+        end
         local reasoning_effort = self:normalizeReasoningEffort(config.chatgpt_reasoning_effort)
         if reasoning_effort then
             self.providers.chatgpt.reasoning_effort = reasoning_effort
         end
+        if type(config.custom_providers) == "table" then
+            for id, provider in pairs(config.custom_providers) do
+                id = self:normalizeProviderId(id)
+                if id and type(provider) == "table" then
+                    provider.type = "openai_compatible"
+                    provider.enabled = provider.enabled ~= false
+                    provider.name = provider.name or id
+                    provider.endpoint = self:normalizeChatCompletionsEndpoint(provider.endpoint)
+                    provider.model = provider.model or "gpt-4o-mini"
+                    provider.thinking_enabled = self:normalizeThinkingMode(provider.thinking_mode ~= nil and provider.thinking_mode or provider.thinking_enabled)
+                    provider.thinking_mode = nil
+                    self.providers[id] = provider
+                end
+            end
+        end
         if config.default_provider then
             local provider = config.default_provider == "openai" and "chatgpt" or config.default_provider
-            if provider == "gemini" or provider == "chatgpt" then
+            if self.providers[provider] then
                 self.default_provider = provider
             end
         end
@@ -158,6 +293,7 @@ end
 -- Load model preference
 function AIHelper:loadModelFromFile()
     local DataStorage = require("datastorage")
+    self:loadCustomProvidersFromFile()
     
     -- Gemini model
     local gemini_file = DataStorage:getSettingsDir() .. "/xray/gemini_model.txt"
@@ -199,11 +335,7 @@ function AIHelper:loadModelFromFile()
     if file then
         local value = file:read("*a"):match("^%s*(.-)%s*$")
         file:close()
-        if value == "enabled" or value == "true" then
-            self.providers.chatgpt.thinking_enabled = true
-        elseif value == "disabled" or value == "false" then
-            self.providers.chatgpt.thinking_enabled = false
-        end
+        self.providers.chatgpt.thinking_enabled = self:normalizeThinkingMode(value)
     end
 
     -- ChatGPT/OpenAI-compatible reasoning effort
@@ -224,7 +356,7 @@ function AIHelper:loadModelFromFile()
     if file then
         local provider = file:read("*a"):match("^%s*(.-)%s*$")
         file:close()
-        if provider and (provider == "gemini" or provider == "chatgpt") then
+        if provider and self.providers[provider] then
             self.default_provider = provider
             logger.info("AIHelper: Loaded default provider from file:", provider)
         end
@@ -311,6 +443,124 @@ function AIHelper:setChatGPTEndpoint(endpoint)
     self.providers.chatgpt.endpoint = endpoint
     self:saveProviderSettingToFile("chatgpt", "endpoint", endpoint)
     return true
+end
+
+function AIHelper:getCustomProvidersPath()
+    return self:ensureSettingsDir() .. "/custom_providers.json"
+end
+
+function AIHelper:loadCustomProvidersFromFile()
+    local path = self:getCustomProvidersPath()
+    local file = io.open(path, "r")
+    if not file then return false end
+    local text = file:read("*a")
+    file:close()
+    local ok, providers = pcall(json.decode, text)
+    if not ok or type(providers) ~= "table" then
+        logger.warn("AIHelper: Failed to parse custom providers")
+        return false
+    end
+
+    for id, provider in pairs(providers) do
+        id = self:normalizeProviderId(id)
+        if id and type(provider) == "table" then
+            provider.type = "openai_compatible"
+            provider.enabled = provider.enabled ~= false
+            provider.name = provider.name or id
+            provider.endpoint = self:normalizeChatCompletionsEndpoint(provider.endpoint)
+            provider.model = provider.model or "gpt-4o-mini"
+            provider.thinking_enabled = self:normalizeThinkingMode(provider.thinking_mode ~= nil and provider.thinking_mode or provider.thinking_enabled)
+            provider.thinking_mode = nil
+            self.providers[id] = provider
+        end
+    end
+    return true
+end
+
+function AIHelper:saveCustomProvidersToFile()
+    local custom = {}
+    for id, provider in pairs(self.providers) do
+        if id:match("^custom:") and self:isOpenAICompatibleProvider(provider) then
+            custom[id] = {
+                name = provider.name,
+                type = "openai_compatible",
+                enabled = provider.enabled ~= false,
+                api_key = provider.api_key,
+                endpoint = provider.endpoint,
+                model = provider.model,
+                thinking_mode = self:getThinkingMode(provider),
+                thinking_enabled = provider.thinking_enabled,
+                reasoning_effort = provider.reasoning_effort,
+            }
+        end
+    end
+
+    local file = io.open(self:getCustomProvidersPath(), "w")
+    if not file then return false end
+    file:write(json.encode(custom))
+    file:close()
+    return true
+end
+
+function AIHelper:createCustomProvider(provider)
+    provider = provider or {}
+    local name = self:trimText(provider.name)
+    if #name == 0 then name = "Custom Provider" end
+    local id = self:normalizeProviderId(provider.id or ("custom:" .. name:lower()))
+    if not id then return nil end
+    if not id:match("^custom:") then id = "custom:" .. id end
+
+    local suffix = 1
+    local base_id = id
+    while self.providers[id] do
+        suffix = suffix + 1
+        id = base_id .. "_" .. tostring(suffix)
+    end
+
+    local thinking_enabled = self:normalizeThinkingMode(provider.thinking_mode ~= nil and provider.thinking_mode or provider.thinking_enabled)
+    self.providers[id] = {
+        name = name,
+        type = "openai_compatible",
+        enabled = true,
+        api_key = self:trimText(provider.api_key),
+        endpoint = self:normalizeChatCompletionsEndpoint(provider.endpoint),
+        model = self:trimText(provider.model) ~= "" and self:trimText(provider.model) or "gpt-4o-mini",
+        thinking_enabled = thinking_enabled,
+        reasoning_effort = self:normalizeReasoningEffort(provider.reasoning_effort) or "high",
+    }
+    self:saveCustomProvidersToFile()
+    return id
+end
+
+function AIHelper:updateCustomProvider(id, updates)
+    id = self:normalizeProviderId(id)
+    local provider = id and self.providers[id]
+    if not provider or not id:match("^custom:") then return false end
+    updates = updates or {}
+    if updates.name ~= nil then provider.name = self:trimText(updates.name) end
+    if updates.api_key ~= nil then provider.api_key = self:trimText(updates.api_key) end
+    if updates.endpoint ~= nil then provider.endpoint = self:normalizeChatCompletionsEndpoint(updates.endpoint) end
+    if updates.model ~= nil then provider.model = self:trimText(updates.model) end
+    if updates.thinking_mode ~= nil then
+        provider.thinking_enabled = self:normalizeThinkingMode(updates.thinking_mode)
+    elseif updates.thinking_enabled ~= nil then
+        provider.thinking_enabled = self:normalizeThinkingMode(updates.thinking_enabled)
+    end
+    if updates.reasoning_effort ~= nil then
+        provider.reasoning_effort = self:normalizeReasoningEffort(updates.reasoning_effort) or provider.reasoning_effort
+    end
+    provider.type = "openai_compatible"
+    return self:saveCustomProvidersToFile()
+end
+
+function AIHelper:deleteCustomProvider(id)
+    id = self:normalizeProviderId(id)
+    if not id or not id:match("^custom:") or not self.providers[id] then return false end
+    self.providers[id] = nil
+    if self.default_provider == id then
+        self:setDefaultProvider("chatgpt")
+    end
+    return self:saveCustomProvidersToFile()
 end
 
 function AIHelper:isLocalEndpoint(url)
@@ -747,13 +997,109 @@ function AIHelper:getAPIErrorMessage(response_text)
     return response_text:sub(1, 500)
 end
 
+function AIHelper:addOpenAICompatibilityParams(request_data, config)
+    if config.thinking_enabled ~= nil then
+        request_data.thinking = {
+            type = config.thinking_enabled and "enabled" or "disabled"
+        }
+        if config.thinking_enabled then
+            request_data.reasoning_effort = config.reasoning_effort or "high"
+        end
+    end
+end
+
+function AIHelper:stripOpenAICompatibilityParams(request_data)
+    request_data.thinking = nil
+    request_data.reasoning_effort = nil
+    request_data.response_format = nil
+end
+
+function AIHelper:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data)
+    if code_num ~= 400 and code_num ~= 422 then return false end
+    if not request_data.thinking and not request_data.reasoning_effort and not request_data.response_format then
+        return false
+    end
+    local detail = self:getAPIErrorMessage(response_text) or ""
+    detail = detail:lower()
+    return detail:match("parsing the body")
+        or detail:match("parse the body")
+        or detail:match("invalid.*body")
+        or detail:match("unknown.*field")
+        or detail:match("unsupported.*field")
+        or detail:match("response_format")
+        or detail:match("thinking")
+        or detail:match("reasoning")
+end
+
+function AIHelper:sanitizeJSONText(text)
+    if type(text) ~= "string" then return "" end
+    local out = {}
+    local i = 1
+    local len = #text
+
+    local function is_continuation(byte)
+        return byte and byte >= 0x80 and byte <= 0xBF
+    end
+
+    while i <= len do
+        local b1 = text:byte(i)
+        if not b1 then
+            break
+        elseif b1 < 0x80 then
+            if b1 == 0x09 or b1 == 0x0A or b1 == 0x0D or b1 >= 0x20 then
+                table.insert(out, string.char(b1))
+            else
+                table.insert(out, " ")
+            end
+            i = i + 1
+        elseif b1 >= 0xC2 and b1 <= 0xDF and is_continuation(text:byte(i + 1)) then
+            table.insert(out, text:sub(i, i + 1))
+            i = i + 2
+        elseif b1 == 0xE0 and text:byte(i + 1) and text:byte(i + 1) >= 0xA0 and text:byte(i + 1) <= 0xBF and is_continuation(text:byte(i + 2)) then
+            table.insert(out, text:sub(i, i + 2))
+            i = i + 3
+        elseif b1 >= 0xE1 and b1 <= 0xEC and is_continuation(text:byte(i + 1)) and is_continuation(text:byte(i + 2)) then
+            table.insert(out, text:sub(i, i + 2))
+            i = i + 3
+        elseif b1 == 0xED and text:byte(i + 1) and text:byte(i + 1) >= 0x80 and text:byte(i + 1) <= 0x9F and is_continuation(text:byte(i + 2)) then
+            table.insert(out, text:sub(i, i + 2))
+            i = i + 3
+        elseif b1 >= 0xEE and b1 <= 0xEF and is_continuation(text:byte(i + 1)) and is_continuation(text:byte(i + 2)) then
+            table.insert(out, text:sub(i, i + 2))
+            i = i + 3
+        elseif b1 == 0xF0 and text:byte(i + 1) and text:byte(i + 1) >= 0x90 and text:byte(i + 1) <= 0xBF and is_continuation(text:byte(i + 2)) and is_continuation(text:byte(i + 3)) then
+            table.insert(out, text:sub(i, i + 3))
+            i = i + 4
+        elseif b1 >= 0xF1 and b1 <= 0xF3 and is_continuation(text:byte(i + 1)) and is_continuation(text:byte(i + 2)) and is_continuation(text:byte(i + 3)) then
+            table.insert(out, text:sub(i, i + 3))
+            i = i + 4
+        elseif b1 == 0xF4 and text:byte(i + 1) and text:byte(i + 1) >= 0x80 and text:byte(i + 1) <= 0x8F and is_continuation(text:byte(i + 2)) and is_continuation(text:byte(i + 3)) then
+            table.insert(out, text:sub(i, i + 3))
+            i = i + 4
+        else
+            table.insert(out, " ")
+            i = i + 1
+        end
+    end
+
+    return table.concat(out)
+end
+
+function AIHelper:sanitizeChatMessages(request_data)
+    if not request_data or type(request_data.messages) ~= "table" then return end
+    for _, message in ipairs(request_data.messages) do
+        if type(message) == "table" and type(message.content) == "string" then
+            message.content = self:sanitizeJSONText(message.content)
+        end
+    end
+end
+
 -- Get book data from AI
 function AIHelper:getBookData(title, author, provider_name, context)
     self:loadModelFromFile() -- Refresh model
-    local provider = provider_name or "gemini"
-    local provider_config = self.providers[provider]
-    
-    if not provider_config or not provider_config.api_key then
+    local provider, provider_config = self:getProvider(provider_name or "gemini")
+
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
         return nil, "error_no_api_key"
     end
     
@@ -765,17 +1111,12 @@ function AIHelper:getBookData(title, author, provider_name, context)
         logger.info("AIHelper: Spoiler-free mode active, reading:", context.reading_percent, "%")
     end
     
-    if provider == "gemini" then
+    if provider_config.type == "gemini" or provider == "gemini" then
         return self:callGemini(prompt, provider_config)
-    elseif provider == "chatgpt" then
+    elseif self:isOpenAICompatibleProvider(provider_config) then
         return self:callChatGPT(prompt, provider_config)
     end
     return nil, "error_unknown_provider"
-end
-
-function AIHelper:trimText(text)
-    if type(text) ~= "string" then return "" end
-    return text:match("^%s*(.-)%s*$") or ""
 end
 
 function AIHelper:createQuestionPrompt(question, context)
@@ -815,8 +1156,7 @@ function AIHelper:askQuestion(question, provider_name, context)
     self:loadModelFromFile()
     self:loadLanguage()
 
-    local provider = provider_name or self.default_provider or "gemini"
-    local provider_config = self.providers[provider]
+    local provider, provider_config = self:getProvider(provider_name or self.default_provider or "gemini")
 
     if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
         return nil, "error_no_api_key"
@@ -825,9 +1165,9 @@ function AIHelper:askQuestion(question, provider_name, context)
     local prompt = self:createQuestionPrompt(question, context)
     logger.info("AIHelper: Asking question with provider:", provider, "Model:", provider_config.model)
 
-    if provider == "gemini" then
+    if provider_config.type == "gemini" or provider == "gemini" then
         return self:callGeminiQuestion(prompt, provider_config)
-    elseif provider == "chatgpt" then
+    elseif self:isOpenAICompatibleProvider(provider_config) then
         return self:callChatGPTQuestion(prompt, provider_config)
     end
 
@@ -841,7 +1181,7 @@ function AIHelper:callGeminiQuestion(prompt, config)
         return nil, "error_no_network", "İnternet bağlantısı yok"
     end
 
-    local model = config.model or "gemini-2.5-flash"
+    local model = config.model or "gemini-3.1-flash-lite"
     local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. model .. ":generateContent?key=" .. config.api_key
     local safety_settings = {
         { category = "HARM_CATEGORY_HARASSMENT", threshold = "BLOCK_NONE" },
@@ -949,14 +1289,8 @@ function AIHelper:callChatGPTQuestion(prompt, config)
         top_p = 0.95,
     }
 
-    if config.thinking_enabled ~= nil then
-        request_data.thinking = {
-            type = config.thinking_enabled and "enabled" or "disabled"
-        }
-        if config.thinking_enabled then
-            request_data.reasoning_effort = config.reasoning_effort or "high"
-        end
-    end
+    self:sanitizeChatMessages(request_data)
+    self:addOpenAICompatibilityParams(request_data, config)
 
     local request_body = json.encode(request_data)
     logger.info("AIHelper: ChatGPT Q&A endpoint:", url)
@@ -1009,9 +1343,15 @@ function AIHelper:callChatGPTQuestion(prompt, config)
             local detail = status or code or res or "unknown transport error"
             return nil, "error_network", "Request failed: " .. tostring(detail)
         else
-            local detail = self:getAPIErrorMessage(response_text)
-            local context = "\nURL: " .. tostring(url) .. "\nModel: " .. tostring(model)
-            return nil, "error_" .. tostring(code_num), "HTTP " .. tostring(code_num) .. (detail and (": " .. detail) or "") .. context
+            if self:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data) and attempt <= max_retries then
+                logger.warn("AIHelper: ChatGPT Q&A body parse error; retrying without thinking/response_format compatibility params")
+                self:stripOpenAICompatibilityParams(request_data)
+                request_body = json.encode(request_data)
+            else
+                local detail = self:getAPIErrorMessage(response_text)
+                local context = "\nURL: " .. tostring(url) .. "\nModel: " .. tostring(model)
+                return nil, "error_" .. tostring(code_num), "HTTP " .. tostring(code_num) .. (detail and (": " .. detail) or "") .. context
+            end
         end
     end
 
@@ -1052,17 +1392,155 @@ end
 -- Create prompt
 function AIHelper:createPrompt(title, author, context)
     if not self.prompts then self:loadLanguage() end
-    
+    context = context or {}
+
     -- Context varsa ve spoiler_free modundaysa özel prompt kullan
+    local prompt
     if context and context.spoiler_free then
         local template = self.prompts.spoiler_free or self.prompts.main
         -- Artık sadece 3 parametre: title, author, percent
-        return string.format(template, title, author or "Bilinmiyor", context.reading_percent)
+        prompt = string.format(template, title, author or "Bilinmiyor", context.reading_percent)
     else
         -- Tam kitap için normal prompt
         local template = self.prompts.main
-        return string.format(template, title, author or "Bilinmiyor")
+        prompt = string.format(template, title, author or "Bilinmiyor")
     end
+
+    local additions = {}
+    if context.source_mode then
+        table.insert(additions, "X-Ray analysis source mode: " .. tostring(context.source_mode))
+    end
+    if context.source_stats then
+        table.insert(additions, "Local text extraction stats: " .. self:formatSimpleTable(context.source_stats))
+    end
+    if type(context.existing_data) == "table" then
+        table.insert(additions, "Existing cached X-Ray data. Improve and complete it with any new local book context; keep useful existing facts unless the new context disproves them:")
+        table.insert(additions, self:formatExistingXRay(context.existing_data))
+    end
+    if context.source_mode == "local_candidates" and type(context.character_candidates) == "table" then
+        table.insert(additions, "Local scan found these possible character names. Use them as candidates, merge aliases, and discard false positives. Keep the final JSON schema unchanged.")
+        table.insert(additions, self:formatCandidates(context.character_candidates))
+        if type(context.chapter_summaries) == "table" and #context.chapter_summaries > 0 then
+            table.insert(additions, "Short excerpts from the locally extracted book text. Use them only to improve character coverage and avoid false positives:")
+            table.insert(additions, self:formatChunkSummaries(context.chapter_summaries))
+        end
+    elseif context.source_mode == "nearby_context" then
+        table.insert(additions, "The following excerpt is near the user's current reading position. Use it to complete or correct character entries, aliases, roles, and relationships. Keep existing X-Ray data when it is still useful, and do not invent plot beyond this excerpt.")
+        if context.nearby_context_stats then
+            table.insert(additions, "Nearby context stats: " .. self:formatSimpleTable(context.nearby_context_stats))
+        end
+        if type(context.character_candidates) == "table" and #context.character_candidates > 0 then
+            table.insert(additions, "Possible local character names from this excerpt:")
+            table.insert(additions, self:formatCandidates(context.character_candidates))
+        end
+        if context.nearby_text and #tostring(context.nearby_text) > 0 then
+            table.insert(additions, "Nearby reading context:\n\"\"\"\n" .. tostring(context.nearby_text):sub(1, 6000) .. "\n\"\"\"")
+        end
+    elseif context.source_mode == "chunked_fulltext" then
+        if type(context.character_candidates) == "table" then
+            table.insert(additions, "Local scan candidate names:")
+            table.insert(additions, self:formatCandidates(context.character_candidates))
+        end
+        if type(context.chapter_summaries) == "table" then
+            table.insert(additions, "Chunk summaries from the book text. Build the final X-Ray JSON from these summaries without inventing later content:")
+            table.insert(additions, self:formatChunkSummaries(context.chapter_summaries))
+        end
+    elseif context.source_mode == "text_chunk" then
+        table.insert(additions, "Analyze only this book chunk. Return the same JSON schema, but include only characters, places, events, and themes visible in this chunk.")
+        if context.chunk_title then
+            table.insert(additions, "Chunk: " .. tostring(context.chunk_title))
+        end
+        if context.book_text then
+            table.insert(additions, "Book chunk text:\n\"\"\"\n" .. tostring(context.book_text):sub(1, 18000) .. "\n\"\"\"")
+        end
+    end
+
+    if #additions > 0 then
+        prompt = prompt .. "\n\nAdditional book context:\n" .. table.concat(additions, "\n\n")
+    end
+
+    return prompt
+end
+
+function AIHelper:formatSimpleTable(value)
+    if type(value) ~= "table" then return tostring(value or "") end
+    local parts = {}
+    for k, v in pairs(value) do
+        if type(v) ~= "table" then
+            table.insert(parts, tostring(k) .. "=" .. tostring(v))
+        end
+    end
+    table.sort(parts)
+    return table.concat(parts, ", ")
+end
+
+function AIHelper:formatExistingXRay(data)
+    local lines = {}
+    if data.summary and #tostring(data.summary) > 0 then
+        table.insert(lines, "Summary: " .. tostring(data.summary):sub(1, 1200))
+    end
+    if type(data.characters) == "table" and #data.characters > 0 then
+        table.insert(lines, "Existing characters:")
+        for i, c in ipairs(data.characters) do
+            if i > 40 then break end
+            local line = "- " .. tostring(c.name or "")
+            if c.role and #tostring(c.role) > 0 then line = line .. " | " .. tostring(c.role) end
+            if c.description and #tostring(c.description) > 0 then
+                line = line .. " | " .. tostring(c.description):sub(1, 180)
+            end
+            table.insert(lines, line)
+        end
+    end
+    if type(data.locations) == "table" and #data.locations > 0 then
+        local names = {}
+        for i, loc in ipairs(data.locations) do
+            if i > 20 then break end
+            table.insert(names, tostring(loc.name or loc))
+        end
+        table.insert(lines, "Existing locations: " .. table.concat(names, ", "))
+    end
+    if type(data.themes) == "table" and #data.themes > 0 then
+        local themes = {}
+        for i, theme in ipairs(data.themes) do
+            if i > 20 then break end
+            table.insert(themes, tostring(theme))
+        end
+        table.insert(lines, "Existing themes: " .. table.concat(themes, ", "))
+    end
+    return table.concat(lines, "\n")
+end
+
+function AIHelper:formatCandidates(candidates)
+    local lines = {}
+    for i, c in ipairs(candidates or {}) do
+        if i > 40 then break end
+        local line = string.format("%d. %s (count: %s, first_seen: %s)", i, tostring(c.name or ""), tostring(c.count or 0), tostring(c.first_seen or 0))
+        if c.contexts and c.contexts[1] then
+            line = line .. "\n   context: " .. tostring(c.contexts[1])
+        end
+        table.insert(lines, line)
+    end
+    return table.concat(lines, "\n")
+end
+
+function AIHelper:formatChunkSummaries(summaries)
+    local lines = {}
+    for i, s in ipairs(summaries or {}) do
+        if i > 80 then break end
+        local text = s.summary or s.excerpt or ""
+        if #text > 900 then text = text:sub(1, 900) end
+        local line = string.format("%d. %s\n%s", i, tostring(s.title or ("Chunk " .. i)), tostring(text))
+        if type(s.characters) == "table" and #s.characters > 0 then
+            local names = {}
+            for j, c in ipairs(s.characters) do
+                if j > 20 then break end
+                table.insert(names, tostring(c.name or c))
+            end
+            line = line .. "\nCharacters: " .. table.concat(names, ", ")
+        end
+        table.insert(lines, line)
+    end
+    return table.concat(lines, "\n\n")
 end
 
 function AIHelper:getFallbackStrings()
@@ -1078,7 +1556,7 @@ function AIHelper:callGemini(prompt, config)
         return nil, "error_no_network", "İnternet bağlantısı yok"
     end
     
-    local model = config.model or "gemini-2.5-flash"
+    local model = config.model or "gemini-3.1-flash-lite"
     local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. model .. ":generateContent?key=" .. config.api_key
     
     -- GÜVENLİK FİLTRELERİNİ KAPAT (Dostoyevski vb. için şart)
@@ -1195,23 +1673,19 @@ function AIHelper:callChatGPT(prompt, config)
         temperature = 0.4,
         max_tokens = 8192,
         top_p = 0.95,
-        response_format = { type = "json_object" } -- JSON mode zorla
     }
 
-    if config.thinking_enabled ~= nil then
-        request_data.thinking = {
-            type = config.thinking_enabled and "enabled" or "disabled"
-        }
-        if config.thinking_enabled then
-            request_data.reasoning_effort = config.reasoning_effort or "high"
-        end
+    if config.response_format_enabled == true then
+        request_data.response_format = { type = "json_object" }
     end
+    self:sanitizeChatMessages(request_data)
+    self:addOpenAICompatibilityParams(request_data, config)
 
     local request_body = json.encode(request_data)
     
     logger.info("AIHelper: ChatGPT endpoint:", url)
     logger.info("AIHelper: ChatGPT model:", model)
-    logger.info("AIHelper: ChatGPT thinking:", config.thinking_enabled == nil and "default" or (config.thinking_enabled and "enabled" or "disabled"))
+    logger.info("AIHelper: ChatGPT thinking:", self:getThinkingMode(config))
     logger.info("AIHelper: ChatGPT reasoning effort:", config.reasoning_effort or "high")
     logger.info("AIHelper: ChatGPT request size:", #request_body)
     
@@ -1225,6 +1699,7 @@ function AIHelper:callChatGPT(prompt, config)
         end
 
         local res, code, headers, status, response_text = self:requestChatCompletions(url, request_body, config.api_key)
+        response_text = response_text or ""
         local code_num = tonumber(code)
         
         logger.info("AIHelper: ChatGPT API Code:", code_num, "Length:", #response_text)
@@ -1278,10 +1753,16 @@ function AIHelper:callChatGPT(prompt, config)
             logger.warn("AIHelper: ChatGPT request failed:", tostring(detail))
             return nil, "error_network", "Request failed: " .. tostring(detail)
         else
-            logger.warn("AIHelper: Unexpected error code:", code_num)
-            local detail = self:getAPIErrorMessage(response_text)
-            local context = "\nURL: " .. tostring(url) .. "\nModel: " .. tostring(model)
-            return nil, "error_" .. tostring(code_num), "HTTP " .. tostring(code_num) .. (detail and (": " .. detail) or "") .. context
+            if self:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data) and attempt <= max_retries then
+                logger.warn("AIHelper: ChatGPT body parse error; retrying without thinking/response_format compatibility params")
+                self:stripOpenAICompatibilityParams(request_data)
+                request_body = json.encode(request_data)
+            else
+                logger.warn("AIHelper: Unexpected error code:", code_num)
+                local detail = self:getAPIErrorMessage(response_text)
+                local context = "\nURL: " .. tostring(url) .. "\nModel: " .. tostring(model)
+                return nil, "error_" .. tostring(code_num), "HTTP " .. tostring(code_num) .. (detail and (": " .. detail) or "") .. context
+            end
         end
     end
     
@@ -1371,14 +1852,19 @@ end
 function AIHelper:setAPIKey(provider, api_key)
     if self.providers[provider] then
         self.providers[provider].api_key = api_key:gsub("%s+", "")
-        self:saveAPIKeyToFile(provider, api_key)
+        if provider:match("^custom:") then
+            self:saveCustomProvidersToFile()
+        else
+            self:saveAPIKeyToFile(provider, api_key)
+        end
         return true
     end
     return false
 end
 
 function AIHelper:testAPIKey(provider)
-    local provider_config = self.providers[provider]
+    local provider_config
+    provider, provider_config = self:getProvider(provider)
     
     if not provider_config then
         return false, "Unknown provider"
@@ -1396,7 +1882,7 @@ function AIHelper:testAPIKey(provider)
     
     local test_prompt = "Test: 'OK'"
     
-    if provider == "gemini" then
+    if provider_config.type == "gemini" or provider == "gemini" then
         local result, error_code, error_msg = self:callGemini(test_prompt, provider_config)
         if result then
             return true, "Success"
@@ -1404,7 +1890,7 @@ function AIHelper:testAPIKey(provider)
             return false, error_msg or ("Error: " .. (error_code or "Unknown"))
         end
         
-    elseif provider == "chatgpt" then
+    elseif self:isOpenAICompatibleProvider(provider_config) then
         local result, error_code, error_msg = self:callChatGPT(test_prompt, provider_config)
         if result then
             return true, "Success"

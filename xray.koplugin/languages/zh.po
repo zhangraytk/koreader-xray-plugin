@@ -848,3 +848,161 @@ msgstr "尚未设置 AI API Key。\n\n请在菜单 → X-Ray → AI 设置中配
 
 msgid "ai_qa_failed"
 msgstr "AI 问答失败。"
+
+# ==============================
+# AI BACKGROUND AND CONTEXT
+# ==============================
+
+msgid "menu_enrich_nearby_context"
+msgstr "用当前位置上下文补充角色"
+
+msgid "menu_background_job"
+msgstr "后台 AI 任务"
+
+msgid "background_job_started"
+msgstr "AI 分析已在后台运行，可继续阅读。"
+
+msgid "background_job_done"
+msgstr "AI 分析完成，X-Ray 数据已准备好。"
+
+msgid "background_job_failed"
+msgstr "AI 分析失败。"
+
+msgid "background_job_cancel"
+msgstr "取消当前任务"
+
+msgid "background_job_cancelled"
+msgstr "AI 分析已取消。"
+
+msgid "background_job_cancel_requested"
+msgstr "已请求取消，当前网络请求可能会先完成。"
+
+msgid "background_job_resume"
+msgstr "恢复任务"
+
+msgid "background_job_none"
+msgstr "没有后台任务。"
+
+msgid "background_job_view_prompt"
+msgstr "查看 Prompt"
+
+msgid "background_job_prompt_not_ready"
+msgstr "Prompt 尚未准备好，会在扫描并开始 AI 请求后出现。"
+
+msgid "text_extraction_diagnostics"
+msgstr "文本提取诊断"
+
+msgid "menu_auto_metadata"
+msgstr "打开书时自动生成 X-Ray 种子"
+
+msgid "auto_metadata_silent"
+msgstr "开启，静默运行"
+
+msgid "auto_metadata_visible"
+msgstr "开启，显示通知"
+
+msgid "auto_metadata_disabled"
+msgstr "关闭"
+
+msgid "auto_metadata_saved"
+msgstr "自动 X-Ray 种子设置已保存"
+
+msgid "menu_context_char_limit"
+msgstr "附近上下文长度"
+
+msgid "context_char_limit_desc"
+msgstr "从当前位置补充角色时发送给 AI 的附近上下文字数。默认：500。"
+
+msgid "context_char_limit_saved"
+msgstr "附近上下文长度已保存：%d"
+
+# ==============================
+# OPENAI-COMPATIBLE PROVIDERS
+# ==============================
+
+msgid "menu_openai_model"
+msgstr "OpenAI 兼容模型"
+
+msgid "openai_model_title"
+msgstr "OpenAI 兼容模型"
+
+msgid "openai_model_hint"
+msgstr "模型名称"
+
+msgid "openai_model_desc"
+msgstr "请输入 OpenAI 兼容服务暴露的准确模型名称。"
+
+msgid "openai_model_saved"
+msgstr "OpenAI 兼容模型已保存"
+
+msgid "menu_openai_thinking"
+msgstr "Thinking 模式"
+
+msgid "openai_thinking_title"
+msgstr "Thinking 模式"
+
+msgid "openai_thinking_omit"
+msgstr "不传参数"
+
+msgid "openai_thinking_on"
+msgstr "启用"
+
+msgid "openai_thinking_off"
+msgstr "禁用"
+
+msgid "openai_thinking_omitted"
+msgstr "将不发送 thinking 参数"
+
+msgid "openai_thinking_enabled"
+msgstr "Thinking 模式已启用"
+
+msgid "openai_thinking_disabled"
+msgstr "Thinking 模式已禁用"
+
+msgid "menu_openai_effort"
+msgstr "Thinking 强度"
+
+msgid "openai_effort_title"
+msgstr "Thinking 强度"
+
+msgid "openai_effort_saved"
+msgstr "Thinking 强度已保存：%s"
+
+msgid "provider_selected"
+msgstr "已选择 %s"
+
+msgid "gemini_model_saved"
+msgstr "Gemini 模型已保存"
+
+msgid "gemini_custom_model"
+msgstr "自定义 Gemini 模型"
+
+msgid "menu_custom_providers"
+msgstr "自定义 Provider"
+
+msgid "custom_provider_add"
+msgstr "新增自定义 Provider"
+
+msgid "custom_provider_edit"
+msgstr "编辑 Provider"
+
+msgid "custom_provider_saved"
+msgstr "Provider 已保存"
+
+msgid "custom_provider_deleted"
+msgstr "Provider 已删除"
+
+msgid "custom_provider_editor_desc"
+msgstr "用 | 分隔字段：名称|端点|模型|APIKey|thinking(omit/enabled/disabled)|effort(high/max)"
+
+msgid "analysis_mode_title"
+msgstr "AI 分析模式"
+
+msgid "analysis_mode_metadata"
+msgstr "轻量模式（仅标题）"
+
+msgid "analysis_mode_local_candidates"
+msgstr "本地候选增强"
+
+msgid "analysis_mode_chunked"
+msgstr "分块正文增强"

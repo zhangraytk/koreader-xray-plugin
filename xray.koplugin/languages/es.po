@@ -665,3 +665,192 @@ msgstr "Configura un endpoint compatible con OpenAI.\nSi introduces solo la URL 
 
 msgid "openai_endpoint_saved"
 msgstr "Endpoint compatible con OpenAI guardado"
+
+# ==============================
+# AI BACKGROUND AND CONTEXT
+# ==============================
+
+msgid "menu_enrich_nearby_context"
+msgstr "Enriquecer personajes con contexto cercano"
+
+msgid "menu_background_job"
+msgstr "Tarea de IA en segundo plano"
+
+msgid "background_job_started"
+msgstr "El análisis de IA se ejecuta en segundo plano. Puedes seguir leyendo."
+
+msgid "background_job_done"
+msgstr "Análisis de IA completo. Los datos de X-Ray están listos."
+
+msgid "background_job_failed"
+msgstr "El análisis de IA falló."
+
+msgid "background_job_cancel"
+msgstr "Cancelar tarea actual"
+
+msgid "background_job_cancelled"
+msgstr "Análisis de IA cancelado."
+
+msgid "background_job_cancel_requested"
+msgstr "Cancelación solicitada. La solicitud de red actual puede terminar primero."
+
+msgid "background_job_resume"
+msgstr "Reanudar tarea"
+
+msgid "background_job_none"
+msgstr "No hay tarea en segundo plano."
+
+msgid "background_job_view_prompt"
+msgstr "Ver prompt"
+
+msgid "background_job_prompt_not_ready"
+msgstr "El prompt aún no está listo. Aparecerá cuando empiece el escaneo y una solicitud de IA."
+
+msgid "text_extraction_diagnostics"
+msgstr "Diagnóstico de extracción de texto"
+
+msgid "menu_auto_metadata"
+msgstr "Semilla X-Ray automática al abrir libro"
+
+msgid "auto_metadata_silent"
+msgstr "Activado, silencioso"
+
+msgid "auto_metadata_visible"
+msgstr "Activado, mostrar notificaciones"
+
+msgid "auto_metadata_disabled"
+msgstr "Desactivado"
+
+msgid "auto_metadata_saved"
+msgstr "Configuración de semilla X-Ray automática guardada"
+
+msgid "menu_context_char_limit"
+msgstr "Longitud del contexto cercano"
+
+msgid "context_char_limit_desc"
+msgstr "Caracteres del contexto de lectura cercano usados para enriquecer personajes desde la posición actual. Predeterminado: 500."
+
+msgid "context_char_limit_saved"
+msgstr "Longitud del contexto cercano guardada: %d"
+
+# ==============================
+# AI Q&A
+# ==============================
+
+msgid "menu_ai_qa"
+msgstr "Preguntas a IA"
+
+msgid "ai_qa_title"
+msgstr "Preguntar a la IA"
+
+msgid "ai_qa_hint"
+msgstr "Pregunta sobre este libro o el texto seleccionado"
+
+msgid "ai_qa_selected_text_desc"
+msgstr "Texto seleccionado:\n%s"
+
+msgid "ai_qa_waiting"
+msgstr "Preguntando a %s...\n\nModelo: %s\n\nEspere."
+
+msgid "ai_qa_answer_title"
+msgstr "Respuesta de IA"
+
+msgid "ai_qa_no_question"
+msgstr "Introduce una pregunta."
+
+msgid "ai_qa_no_api_key"
+msgstr "La clave API de IA no está configurada.\n\nConfigúrala en Menú → X-Ray → Ajustes de IA."
+
+msgid "ai_qa_failed"
+msgstr "La pregunta a IA falló."
+
+# ==============================
+# OPENAI-COMPATIBLE PROVIDERS
+# ==============================
+
+msgid "menu_openai_model"
+msgstr "Modelo compatible con OpenAI"
+
+msgid "openai_model_title"
+msgstr "Modelo compatible con OpenAI"
+
+msgid "openai_model_hint"
+msgstr "Nombre del modelo"
+
+msgid "openai_model_desc"
+msgstr "Usa el nombre exacto del modelo expuesto por tu servidor compatible con OpenAI."
+
+msgid "openai_model_saved"
+msgstr "Modelo compatible con OpenAI guardado"
+
+msgid "menu_openai_thinking"
+msgstr "Modo thinking"
+
+msgid "openai_thinking_title"
+msgstr "Modo thinking"
+
+msgid "openai_thinking_omit"
+msgstr "Omitir parámetro"
+
+msgid "openai_thinking_on"
+msgstr "Activado"
+
+msgid "openai_thinking_off"
+msgstr "Desactivado"
+
+msgid "openai_thinking_omitted"
+msgstr "El parámetro thinking se omitirá"
+
+msgid "openai_thinking_enabled"
+msgstr "Modo thinking activado"
+
+msgid "openai_thinking_disabled"
+msgstr "Modo thinking desactivado"
+
+msgid "menu_openai_effort"
+msgstr "Esfuerzo thinking"
+
+msgid "openai_effort_title"
+msgstr "Esfuerzo thinking"
+
+msgid "openai_effort_saved"
+msgstr "Esfuerzo thinking guardado: %s"
+
+msgid "provider_selected"
+msgstr "%s seleccionado"
+
+msgid "gemini_model_saved"
+msgstr "Modelo Gemini guardado"
+
+msgid "gemini_custom_model"
+msgstr "Modelo Gemini personalizado"
+
+msgid "menu_custom_providers"
+msgstr "Providers personalizados"
+
+msgid "custom_provider_add"
+msgstr "Añadir provider personalizado"
+
+msgid "custom_provider_edit"
+msgstr "Editar provider"
+
+msgid "custom_provider_saved"
+msgstr "Provider guardado"
+
+msgid "custom_provider_deleted"
+msgstr "Provider eliminado"
+
+msgid "custom_provider_editor_desc"
+msgstr "Introduce campos separados por |: Nombre|Endpoint|Modelo|APIKey|thinking(omit/enabled/disabled)|effort(high/max)"
+
+msgid "analysis_mode_title"
+msgstr "Modo de análisis de IA"
+
+msgid "analysis_mode_metadata"
+msgstr "Modo ligero (solo título)"
+
+msgid "analysis_mode_local_candidates"
+msgstr "Mejora con candidatos locales"
+
+msgid "analysis_mode_chunked"
+msgstr "Mejora con texto por bloques"

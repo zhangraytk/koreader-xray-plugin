@@ -817,3 +817,192 @@ msgstr "Özel bir OpenAI uyumlu endpoint ayarlayın.\nSadece base URL girerseniz
 
 msgid "openai_endpoint_saved"
 msgstr "OpenAI uyumlu endpoint kaydedildi"
+
+# ==============================
+# AI BACKGROUND AND CONTEXT
+# ==============================
+
+msgid "menu_enrich_nearby_context"
+msgstr "Yakındaki bağlamla karakterleri geliştir"
+
+msgid "menu_background_job"
+msgstr "Arka plan AI görevi"
+
+msgid "background_job_started"
+msgstr "AI analizi arka planda çalışıyor. Okumaya devam edebilirsiniz."
+
+msgid "background_job_done"
+msgstr "AI analizi tamamlandı. X-Ray verisi hazır."
+
+msgid "background_job_failed"
+msgstr "AI analizi başarısız oldu."
+
+msgid "background_job_cancel"
+msgstr "Geçerli görevi iptal et"
+
+msgid "background_job_cancelled"
+msgstr "AI analizi iptal edildi."
+
+msgid "background_job_cancel_requested"
+msgstr "İptal istendi. Geçerli ağ isteği önce tamamlanabilir."
+
+msgid "background_job_resume"
+msgstr "Görevi sürdür"
+
+msgid "background_job_none"
+msgstr "Arka plan görevi yok."
+
+msgid "background_job_view_prompt"
+msgstr "Prompt'u görüntüle"
+
+msgid "background_job_prompt_not_ready"
+msgstr "Prompt henüz hazır değil. Tarama başlayıp AI isteği oluşturulunca görünecek."
+
+msgid "text_extraction_diagnostics"
+msgstr "Metin çıkarma tanılama"
+
+msgid "menu_auto_metadata"
+msgstr "Kitap açılırken otomatik X-Ray başlangıcı"
+
+msgid "auto_metadata_silent"
+msgstr "Açık, sessiz"
+
+msgid "auto_metadata_visible"
+msgstr "Açık, bildirim göster"
+
+msgid "auto_metadata_disabled"
+msgstr "Kapalı"
+
+msgid "auto_metadata_saved"
+msgstr "Otomatik X-Ray başlangıç ayarı kaydedildi"
+
+msgid "menu_context_char_limit"
+msgstr "Yakın bağlam uzunluğu"
+
+msgid "context_char_limit_desc"
+msgstr "Geçerli konumdan karakterleri geliştirirken AI'ye gönderilecek yakın okuma bağlamı karakter sayısı. Varsayılan: 500."
+
+msgid "context_char_limit_saved"
+msgstr "Yakın bağlam uzunluğu kaydedildi: %d"
+
+# ==============================
+# AI Q&A
+# ==============================
+
+msgid "menu_ai_qa"
+msgstr "AI Soru-Cevap"
+
+msgid "ai_qa_title"
+msgstr "AI'ye sor"
+
+msgid "ai_qa_hint"
+msgstr "Bu kitap veya seçili metin hakkında sor"
+
+msgid "ai_qa_selected_text_desc"
+msgstr "Seçili metin:\n%s"
+
+msgid "ai_qa_waiting"
+msgstr "%s yanıtlıyor...\n\nModel: %s\n\nLütfen bekleyin."
+
+msgid "ai_qa_answer_title"
+msgstr "AI Yanıtı"
+
+msgid "ai_qa_no_question"
+msgstr "Lütfen bir soru girin."
+
+msgid "ai_qa_no_api_key"
+msgstr "AI API anahtarı ayarlı değil.\n\nMenü → X-Ray → AI Ayarları bölümünden ayarlayın."
+
+msgid "ai_qa_failed"
+msgstr "AI Soru-Cevap başarısız oldu."
+
+# ==============================
+# OPENAI-COMPATIBLE PROVIDERS
+# ==============================
+
+msgid "menu_openai_model"
+msgstr "OpenAI uyumlu model"
+
+msgid "openai_model_title"
+msgstr "OpenAI uyumlu model"
+
+msgid "openai_model_hint"
+msgstr "Model adı"
+
+msgid "openai_model_desc"
+msgstr "OpenAI uyumlu sunucunuzun sunduğu tam model adını kullanın."
+
+msgid "openai_model_saved"
+msgstr "OpenAI uyumlu model kaydedildi"
+
+msgid "menu_openai_thinking"
+msgstr "Thinking modu"
+
+msgid "openai_thinking_title"
+msgstr "Thinking modu"
+
+msgid "openai_thinking_omit"
+msgstr "Parametreyi gönderme"
+
+msgid "openai_thinking_on"
+msgstr "Etkin"
+
+msgid "openai_thinking_off"
+msgstr "Devre dışı"
+
+msgid "openai_thinking_omitted"
+msgstr "Thinking parametresi gönderilmeyecek"
+
+msgid "openai_thinking_enabled"
+msgstr "Thinking modu etkin"
+
+msgid "openai_thinking_disabled"
+msgstr "Thinking modu devre dışı"
+
+msgid "menu_openai_effort"
+msgstr "Thinking çabası"
+
+msgid "openai_effort_title"
+msgstr "Thinking çabası"
+
+msgid "openai_effort_saved"
+msgstr "Thinking çabası kaydedildi: %s"
+
+msgid "provider_selected"
+msgstr "%s seçildi"
+
+msgid "gemini_model_saved"
+msgstr "Gemini modeli kaydedildi"
+
+msgid "gemini_custom_model"
+msgstr "Özel Gemini modeli"
+
+msgid "menu_custom_providers"
+msgstr "Özel provider'lar"
+
+msgid "custom_provider_add"
+msgstr "Özel provider ekle"
+
+msgid "custom_provider_edit"
+msgstr "Provider'ı düzenle"
+
+msgid "custom_provider_saved"
+msgstr "Provider kaydedildi"
+
+msgid "custom_provider_deleted"
+msgstr "Provider silindi"
+
+msgid "custom_provider_editor_desc"
+msgstr "Alanları | ile ayırın: Ad|Endpoint|Model|APIKey|thinking(omit/enabled/disabled)|effort(high/max)"
+
+msgid "analysis_mode_title"
+msgstr "AI analiz modu"
+
+msgid "analysis_mode_metadata"
+msgstr "Hafif mod (sadece başlık)"
+
+msgid "analysis_mode_local_candidates"
+msgstr "Yerel aday geliştirme"
+
+msgid "analysis_mode_chunked"
+msgstr "Parçalı metin geliştirme"
