@@ -7,7 +7,73 @@ local Localization = {
     current_language = "tr",
     translations = {},
     available_languages = {},
+    supported_languages = {
+        tr = true,
+        en = true,
+        pt_br = true,
+        es = true,
+        zh = true,
+    },
 }
+
+function Localization:getPluginDir()
+    if self.plugin_dir then
+        return self.plugin_dir
+    end
+
+    local candidates = {}
+    local info = debug and debug.getinfo and debug.getinfo(1, "S") or {}
+    local source = info.source or ""
+    local path = source:match("^@(.+)$")
+    if path then
+        local source_dir = path:match("^(.*)/localization_xray%.lua$")
+        if source_dir then
+            table.insert(candidates, source_dir)
+        end
+    end
+
+    local ok, DataStorage = pcall(require, "datastorage")
+    if ok and DataStorage then
+        local dir_ok, data_dir = pcall(function()
+            return DataStorage.getFullDataDir and DataStorage:getFullDataDir() or DataStorage:getDataDir()
+        end)
+        if dir_ok and data_dir then
+            table.insert(candidates, data_dir .. "/plugins/xray.koplugin")
+        end
+    end
+
+    table.insert(candidates, "plugins/xray.koplugin")
+
+    for _, dir in ipairs(candidates) do
+        if dir and lfs.attributes(dir .. "/languages", "mode") == "directory" then
+            self.plugin_dir = dir
+            return self.plugin_dir
+        end
+    end
+
+    self.plugin_dir = candidates[1] or "plugins/xray.koplugin"
+    return self.plugin_dir
+end
+
+function Localization:ensureDirectory(dir)
+    local attr = lfs.attributes(dir)
+    if attr then
+        return attr.mode == "directory"
+    end
+
+    local parent = dir:match("^(.*)/[^/]+$")
+    if parent and parent ~= "" and parent ~= dir and not self:ensureDirectory(parent) then
+        return false
+    end
+
+    local success, err = lfs.mkdir(dir)
+    if not success and not lfs.attributes(dir) then
+        logger.error("Localization: Failed to create directory:", dir, err or "unknown error")
+        return false
+    end
+
+    return true
+end
 
 -- Simple .po file parser
 function Localization:parsePO(filepath)
@@ -25,40 +91,35 @@ function Localization:parsePO(filepath)
     local in_msgstr = false
     
     for line in file:lines() do
-        -- Skip comments and empty lines
-        if line:match("^#") or line:match("^%s*$") then
-            goto continue
-        end
-        
-        -- Start of msgid
-        if line:match('^msgid%s+"') then
-            -- Save previous translation
-            if msgid and msgstr then
-                translations[msgid] = msgstr
-            end
+        if not line:match("^#") and not line:match("^%s*$") then
+            -- Start of msgid
+            if line:match('^msgid%s+"') then
+                -- Save previous translation
+                if msgid and msgstr then
+                    translations[msgid] = msgstr
+                end
+                
+                msgid = line:match('^msgid%s+"(.-)"')
+                msgstr = nil
+                in_msgid = true
+                in_msgstr = false
             
-            msgid = line:match('^msgid%s+"(.-)"')
-            msgstr = nil
-            in_msgid = true
-            in_msgstr = false
-        
-        -- Start of msgstr
-        elseif line:match('^msgstr%s+"') then
-            msgstr = line:match('^msgstr%s+"(.-)"')
-            in_msgid = false
-            in_msgstr = true
-        
-        -- Continuation line
-        elseif line:match('^"') then
-            local continuation = line:match('^"(.-)"')
-            if in_msgid and msgid then
-                msgid = msgid .. continuation
-            elseif in_msgstr and msgstr then
-                msgstr = msgstr .. continuation
+            -- Start of msgstr
+            elseif line:match('^msgstr%s+"') then
+                msgstr = line:match('^msgstr%s+"(.-)"')
+                in_msgid = false
+                in_msgstr = true
+            
+            -- Continuation line
+            elseif line:match('^"') then
+                local continuation = line:match('^"(.-)"')
+                if in_msgid and msgid then
+                    msgid = msgid .. continuation
+                elseif in_msgstr and msgstr then
+                    msgstr = msgstr .. continuation
+                end
             end
         end
-        
-        ::continue::
     end
     
     -- Save last translation
@@ -84,6 +145,9 @@ end
 function Localization:init()
     logger.info("Localization: Initializing...")
     
+    -- Ensure settings directory exists
+    self:ensureSettingsDir()
+    
     -- Discover available language files
     self:discoverLanguages()
     
@@ -96,9 +160,25 @@ function Localization:init()
     logger.info("Localization: Initialized with language:", self.current_language)
 end
 
+-- Ensure the xray settings directory exists
+function Localization:ensureSettingsDir()
+    local DataStorage = require("datastorage")
+    local settings_dir = DataStorage:getSettingsDir()
+    local xray_dir = settings_dir .. "/xray"
+    
+    local attr = lfs.attributes(xray_dir)
+    if attr and attr.mode ~= "directory" then
+        logger.warn("Localization: Settings path exists but is not a directory:", xray_dir)
+    elseif self:ensureDirectory(xray_dir) then
+        logger.info("Localization: Settings directory ready:", xray_dir)
+    else
+        logger.error("Localization: Failed to prepare settings directory:", xray_dir)
+    end
+end
+
 -- Discover available .po files
 function Localization:discoverLanguages()
-    local plugin_dir = "plugins/xray.koplugin"
+    local plugin_dir = self:getPluginDir()
     local lang_dir = plugin_dir .. "/languages"
     
     self.available_languages = {}
@@ -114,6 +194,7 @@ function Localization:discoverLanguages()
             local lang_code = file:match("^(.+)%.po$")
             if lang_code then
                 table.insert(self.available_languages, lang_code)
+                self.supported_languages[lang_code] = true
                 logger.info("Localization: Found language:", lang_code)
             end
         end
@@ -125,7 +206,7 @@ end
 
 -- Load translations from .po file
 function Localization:loadTranslations()
-    local plugin_dir = "plugins/xray.koplugin"
+    local plugin_dir = self:getPluginDir()
     local po_file = plugin_dir .. "/languages/" .. self.current_language .. ".po"
     
     logger.info("Localization: Loading translations from:", po_file)
@@ -174,6 +255,29 @@ function Localization:t(key, ...)
             ai_fetch_complete = "✅ Fetched from %s\n\n📖 %s\n👤 %s\n\n👥 %d | 📍 %d | 🎨 %d | 📅 %d | 📜 %d\n\n%s",
             fetching_ai = "🤖 Fetching from %s...",
             no_api_key = "⚠️ No API key set!",
+            menu_openai_model = "OpenAI-compatible model",
+            openai_model_title = "OpenAI-compatible model",
+            openai_model_hint = "Model name",
+            openai_model_desc = "Use the exact model name exposed by your OpenAI-compatible server.",
+            openai_model_saved = "OpenAI-compatible model saved",
+            menu_openai_thinking = "Thinking mode",
+            openai_thinking_title = "Thinking mode",
+            openai_thinking_on = "Enabled",
+            openai_thinking_off = "Disabled",
+            openai_thinking_enabled = "Thinking mode enabled",
+            openai_thinking_disabled = "Thinking mode disabled",
+            menu_openai_effort = "Thinking effort",
+            openai_effort_title = "Thinking effort",
+            openai_effort_saved = "Thinking effort saved: %s",
+            menu_ai_qa = "AI Q&A",
+            ai_qa_title = "Ask AI",
+            ai_qa_hint = "Ask about this book or selected text",
+            ai_qa_selected_text_desc = "Selected text:\n%s",
+            ai_qa_waiting = "Asking %s...\n\nModel: %s\n\nPlease wait.",
+            ai_qa_answer_title = "AI Answer",
+            ai_qa_no_question = "Please enter a question.",
+            ai_qa_no_api_key = "AI API key is not set.\n\nSet it in Menu → X-Ray → AI Settings.",
+            ai_qa_failed = "AI Q&A failed.",
         }
         translation = fallbacks[key] or key
     end
@@ -199,7 +303,7 @@ function Localization:t(key, ...)
     return translation
 end
 
--- Load/save language preference (same as before)
+-- Load/save language preference
 function Localization:loadLanguage()
     local DataStorage = require("datastorage")
     local settings_dir = DataStorage:getSettingsDir()
@@ -207,28 +311,33 @@ function Localization:loadLanguage()
     
     local file = io.open(language_file, "r")
     if file then
-        local lang = file:read("*a")
+        local content = file:read("*a")
         file:close()
-        lang = lang:match("^%s*(.-)%s*$")
         
-        if self:languageExists(lang) then
-            self.current_language = lang
-            logger.info("Localization: Loaded language from file:", lang)
-        else
-            logger.warn("Localization: Language not found:", lang)
-            self.current_language = "tr"
+        if content then
+            content = content:gsub("^%s+", ""):gsub("%s+$", "")
+            if #content > 0 and self:languageExists(content) then
+                self.current_language = content
+                logger.info("Localization: Loaded language from file:", content)
+                return
+            elseif #content > 0 then
+                logger.warn("Localization: Saved language is not available:", content)
+            end
         end
-    else
-        self.current_language = "tr"
-        logger.info("Localization: No saved language, using default: tr")
     end
+    
+    self.current_language = "tr"
+    logger.info("Localization: Using default language: tr")
 end
 
 function Localization:languageExists(lang_code)
     for _, code in ipairs(self.available_languages) do
-        if code == lang_code then return true end
+        if code == lang_code then
+            return true
+        end
     end
-    return false
+
+    return self.supported_languages[lang_code] == true
 end
 
 function Localization:getLanguage()
@@ -245,25 +354,45 @@ function Localization:setLanguage(lang_code)
         return false
     end
     
-    self.current_language = lang_code
-    
     local DataStorage = require("datastorage")
     local settings_dir = DataStorage:getSettingsDir()
     local xray_dir = settings_dir .. "/xray"
-    lfs.mkdir(xray_dir)
     
-    local language_file = xray_dir .. "/language.txt"
-    local file = io.open(language_file, "w")
-    if file then
-        file:write(lang_code)
-        file:close()
-        logger.info("Localization: Language saved:", lang_code)
+    logger.info("Localization: Attempting to save language to:", xray_dir)
+    
+    if not self:ensureDirectory(xray_dir) then
+        logger.error("Localization: Cannot create settings directory:", xray_dir)
+        return false
     end
     
-    self:loadTranslations()
+    -- Write language file
+    local language_file = xray_dir .. "/language.txt"
+    logger.info("Localization: Writing to file:", language_file)
     
-    local AIHelper = require("aihelper")
-    if AIHelper then
+    local file, open_err = io.open(language_file, "w")
+    if not file then
+        logger.error("Localization: io.open failed. Error:", tostring(open_err))
+        logger.error("Localization: Full path:", language_file)
+        logger.error("Localization: Settings dir:", settings_dir)
+        return false
+    end
+    
+    local success, write_err = file:write(lang_code)
+    file:close()
+    
+    if not success then
+        logger.error("Localization: file:write failed. Error:", tostring(write_err))
+        return false
+    end
+    
+    logger.info("Localization: Language successfully written:", lang_code)
+    
+    -- Reload translations
+    self.current_language = lang_code
+    self:loadTranslations()
+
+    local success, AIHelper = pcall(require, "aihelper")
+    if success and AIHelper then
         AIHelper:loadLanguage()
     end
     

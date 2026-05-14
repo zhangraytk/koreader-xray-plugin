@@ -29,6 +29,7 @@ end
 function XRayPlugin:onReaderReady()
     -- Auto-load cache when book is opened
     self:autoLoadCache()
+    self:registerAIQuestionHighlightAction()
 end
 
 function XRayPlugin:onDispatcherRegisterActions()
@@ -91,6 +92,14 @@ function XRayPlugin:onDispatcherRegisterActions()
         title = self.loc:t("menu_locations") or "Locations",
         general = true,
     }) 
+
+    -- X-Ray AI Q&A action
+    Dispatcher:registerAction("xray_ai_qa", {
+        category = "none",
+        event = "ShowXRayAIQuestion",
+        title = self.loc:t("menu_ai_qa") or "AI Q&A",
+        general = true,
+    })
 end
 
 -- Event handlers for Dispatcher actions
@@ -131,6 +140,11 @@ end
 
 function XRayPlugin:onShowXRayLocations()
     self:showLocations()
+    return true
+end
+
+function XRayPlugin:onShowXRayAIQuestion()
+    self:showAIQuestionDialog()
     return true
 end
 
@@ -382,6 +396,13 @@ function XRayPlugin:addToMainMenu(menu_items)
             },
             { separator = true },
             {
+                text = self.loc:t("menu_ai_qa"),
+                keep_menu_open = true,
+                callback = function()
+                    self:showAIQuestionDialog()
+                end,
+            },
+            {
                 text = self.loc:t("menu_fetch_ai"),
                 keep_menu_open = true,
                 callback = function()
@@ -412,6 +433,27 @@ function XRayPlugin:addToMainMenu(menu_items)
                         keep_menu_open = true,
                         callback = function()
                             self:setChatGPTAPIKey()
+                        end,
+                    },
+                    {
+                        text = self.loc:t("menu_openai_model"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:setOpenAICompatibleModel()
+                        end,
+                    },
+                    {
+                        text = self.loc:t("menu_openai_thinking"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:selectOpenAIThinkingMode()
+                        end,
+                    },
+                    {
+                        text = self.loc:t("menu_openai_effort"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:selectOpenAIReasoningEffort()
                         end,
                     },
                     {
@@ -471,7 +513,7 @@ function XRayPlugin:showLanguageSelection()
     local ButtonDialog = require("ui/widget/buttondialog")
     local InfoMessage = require("ui/widget/infomessage")
     
-    local current_lang = "tr" -- Varsayılan
+    local current_lang = "tr"
     if self.loc then
         current_lang = self.loc:getLanguage()
     end
@@ -480,33 +522,37 @@ function XRayPlugin:showLanguageSelection()
         UIManager:close(self.ldlg)
         
         if self.loc then 
-            self.loc:setLanguage(lang_code) 
+            local save_success = self.loc:setLanguage(lang_code)
+            
+            if save_success then
+                UIManager:show(InfoMessage:new{
+                    text = "✅ " .. self.loc:t("language_changed") .. "\n\n" .. self.loc:t("please_restart"),
+                    timeout = 4 
+                })
+            else
+                UIManager:show(InfoMessage:new{
+                    text = "❌ Language save failed!\n\nPlease check:\n1. Storage is writable\n2. Have enough free space",
+                    timeout = 4 
+                })
+            end
         end
-        
-        UIManager:show(InfoMessage:new{
-            text = "✅" .. self.loc:t("language_changed") .. "\n\n" .. self.loc:t("please_restart"),
-            timeout = 4 
-        })
     end
     
     local buttons = {
         {
             {
-                -- Eğer mevcut dil 'tr' ise yanına tik koy
                 text = "Türkçe" .. (current_lang == "tr" and " ✓" or ""), 
                 callback = function() changeLang("tr", "Türkçe") end
             }
         },
         {
             {
-                -- Eğer mevcut dil 'en' ise yanına tik koy
                 text = "English" .. (current_lang == "en" and " ✓" or ""), 
                 callback = function() changeLang("en", "English") end
             }
         },
         {
             {
-                -- Eğer mevcut dil 'por' ise yanına tik koy
                 text = "Português" .. (current_lang == "pt_br" and " ✓" or ""), 
                 callback = function() changeLang("pt_br", "Português") end
             }
@@ -1176,6 +1222,184 @@ function XRayPlugin:showCharacterInfo(char)
     })
 end
 
+function XRayPlugin:registerAIQuestionHighlightAction()
+    if self._xray_ai_qa_highlight_registered then
+        return
+    end
+
+    if not self.ui or not self.ui.highlight or type(self.ui.highlight.addToHighlightDialog) ~= "function" then
+        logger.warn("XRayPlugin: Highlight dialog is not available for AI Q&A")
+        if not self._xray_ai_qa_highlight_retry_scheduled then
+            self._xray_ai_qa_highlight_retry_scheduled = true
+            UIManager:scheduleIn(1.0, function()
+                self._xray_ai_qa_highlight_retry_scheduled = nil
+                self:registerAIQuestionHighlightAction()
+            end)
+        end
+        return
+    end
+
+    local plugin = self
+    self.ui.highlight:addToHighlightDialog("08_xray_ai_qa", function(highlight)
+        return {
+            text = plugin.loc:t("menu_ai_qa"),
+            enabled = highlight.selected_text and highlight.selected_text.text and #highlight.selected_text.text > 0,
+            callback = function()
+                local util = require("util")
+                local selected_text = ""
+                if highlight.selected_text and highlight.selected_text.text then
+                    selected_text = util.cleanupSelectedText(highlight.selected_text.text)
+                end
+                highlight:onClose(true)
+                UIManager:scheduleIn(0.1, function()
+                    plugin:showAIQuestionDialog(selected_text)
+                end)
+            end,
+        }
+    end)
+
+    self._xray_ai_qa_highlight_registered = true
+    logger.info("XRayPlugin: AI Q&A highlight action registered")
+end
+
+function XRayPlugin:getAIQuestionContext(selected_text)
+    local props = self.ui and self.ui.document and self.ui.document.getProps and self.ui.document:getProps() or {}
+    local title = props.title or self.book_title or "Unknown"
+    local author = props.authors or props.author or self.author or ""
+
+    if type(author) == "table" then
+        author = table.concat(author, ", ")
+    elseif type(author) ~= "string" then
+        author = tostring(author or "")
+    end
+
+    return {
+        title = title,
+        author = author,
+        summary = self.summary or "",
+        selected_text = selected_text or "",
+        language = self.loc and self.loc.getLanguage and self.loc:getLanguage() or "en",
+    }
+end
+
+function XRayPlugin:showAIQuestionDialog(selected_text)
+    local InputDialog = require("ui/widget/inputdialog")
+
+    selected_text = selected_text or ""
+    local selected_preview = selected_text
+    if #selected_preview > 300 then
+        selected_preview = selected_preview:sub(1, 300) .. "..."
+    end
+
+    local description = nil
+    if #selected_preview > 0 then
+        description = string.format(self.loc:t("ai_qa_selected_text_desc"), selected_preview)
+    end
+
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = self.loc:t("ai_qa_title"),
+        input = "",
+        input_hint = self.loc:t("ai_qa_hint"),
+        description = description,
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function()
+                        UIManager:close(input_dialog)
+                    end,
+                },
+                {
+                    text = self.loc:t("menu_ai_qa"),
+                    is_enter_default = true,
+                    callback = function()
+                        local question = input_dialog:getInputText() or ""
+                        UIManager:close(input_dialog)
+                        self:askAIQuestion(question, selected_text)
+                    end,
+                },
+            },
+        },
+    }
+
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
+function XRayPlugin:askAIQuestion(question, selected_text)
+    question = question or ""
+    question = question:match("^%s*(.-)%s*$") or ""
+    selected_text = selected_text or ""
+
+    if #question == 0 and #selected_text == 0 then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_no_question"),
+            timeout = 3,
+        })
+        return
+    end
+
+    if #question == 0 then
+        question = "Explain the selected text in the context of this book."
+    end
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local selected_provider = self.ai_provider or self.ai_helper.default_provider or "gemini"
+    local provider_config = self.ai_helper.providers[selected_provider]
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_no_api_key"),
+            timeout = 5,
+        })
+        return
+    end
+
+    local provider_name = provider_config.name or "AI"
+    local model = provider_config.model or self.loc:t("unknown_model")
+    local wait_msg = InfoMessage:new{
+        text = string.format(self.loc:t("ai_qa_waiting"), provider_name, model),
+        timeout = 60,
+    }
+    UIManager:show(wait_msg)
+
+    UIManager:scheduleIn(0.1, function()
+        local answer, error_code, error_msg = self.ai_helper:askQuestion(
+            question,
+            selected_provider,
+            self:getAIQuestionContext(selected_text)
+        )
+
+        if wait_msg then UIManager:close(wait_msg) end
+
+        if not answer then
+            local error_text = self.loc:t("ai_qa_failed")
+            if error_code == "error_no_api_key" then
+                error_text = self.loc:t("ai_qa_no_api_key")
+            elseif error_msg then
+                error_text = error_text .. "\n\n" .. error_msg
+            end
+            UIManager:show(InfoMessage:new{
+                text = error_text,
+                timeout = 7,
+            })
+            return
+        end
+
+        local TextViewer = require("ui/widget/textviewer")
+        UIManager:show(TextViewer:new{
+            title = self.loc:t("ai_qa_answer_title"),
+            text = answer,
+            justified = false,
+        })
+    end)
+end
+
 function XRayPlugin:setGeminiAPIKey()
     local InputDialog = require("ui/widget/inputdialog")
     
@@ -1281,6 +1505,142 @@ function XRayPlugin:setChatGPTAPIKey()
     }
     UIManager:show(input_dialog)
     input_dialog:onShowKeyboard()
+end
+
+function XRayPlugin:setOpenAICompatibleModel()
+    local InputDialog = require("ui/widget/inputdialog")
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local current_model = self.ai_helper.providers.chatgpt.model or "gpt-4o-mini"
+
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = self.loc:t("openai_model_title"),
+        input = current_model,
+        input_hint = self.loc:t("openai_model_hint"),
+        description = self.loc:t("openai_model_desc"),
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function()
+                        UIManager:close(input_dialog)
+                    end,
+                },
+                {
+                    text = self.loc:t("save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local model = input_dialog:getInputText()
+                        if model and #model > 0 then
+                            local success = self.ai_helper:setChatGPTModel(model)
+                            if success then
+                                self.ai_provider = "chatgpt"
+                                UIManager:show(InfoMessage:new{
+                                    text = self.loc:t("openai_model_saved"),
+                                    timeout = 3,
+                                })
+                            end
+                        end
+                        UIManager:close(input_dialog)
+                    end,
+                },
+            }
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
+function XRayPlugin:selectOpenAIThinkingMode()
+    local ButtonDialog = require("ui/widget/buttondialog")
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local current = self.ai_helper.providers.chatgpt.thinking_enabled
+    local thinking_dialog
+    local function saveThinking(enabled)
+        local success = self.ai_helper:setChatGPTThinking(enabled)
+        if success then
+            self.ai_provider = "chatgpt"
+            UIManager:show(InfoMessage:new{
+                text = enabled and self.loc:t("openai_thinking_enabled") or self.loc:t("openai_thinking_disabled"),
+                timeout = 3,
+            })
+        end
+        UIManager:close(thinking_dialog)
+    end
+
+    thinking_dialog = ButtonDialog:new{
+        title = self.loc:t("openai_thinking_title"),
+        buttons = {
+            {
+                {
+                    text = self.loc:t("openai_thinking_on") .. (current == true and " ✓" or ""),
+                    callback = function() saveThinking(true) end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("openai_thinking_off") .. (current == false and " ✓" or ""),
+                    callback = function() saveThinking(false) end,
+                },
+            },
+        },
+    }
+    UIManager:show(thinking_dialog)
+end
+
+function XRayPlugin:selectOpenAIReasoningEffort()
+    local ButtonDialog = require("ui/widget/buttondialog")
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local current = self.ai_helper.providers.chatgpt.reasoning_effort or "high"
+    local effort_dialog
+    local function saveEffort(effort)
+        local success = self.ai_helper:setChatGPTReasoningEffort(effort)
+        if success then
+            self.ai_provider = "chatgpt"
+            UIManager:show(InfoMessage:new{
+                text = string.format(self.loc:t("openai_effort_saved"), effort),
+                timeout = 3,
+            })
+        end
+        UIManager:close(effort_dialog)
+    end
+
+    effort_dialog = ButtonDialog:new{
+        title = self.loc:t("openai_effort_title"),
+        buttons = {
+            {
+                {
+                    text = "high" .. (current == "high" and " ✓" or ""),
+                    callback = function() saveEffort("high") end,
+                },
+            },
+            {
+                {
+                    text = "max" .. (current == "max" and " ✓" or ""),
+                    callback = function() saveEffort("max") end,
+                },
+            },
+        },
+    }
+    UIManager:show(effort_dialog)
 end
 
 function XRayPlugin:setOpenAICompatibleEndpoint()
@@ -1929,6 +2289,15 @@ function XRayPlugin:showQuickXRayMenu()
                 callback = function()
                     UIManager:close(self.quick_dialog)
                     self:showCharacterNotes()
+                end,
+            },
+        },
+        {
+            {
+                text = self.loc:t("menu_ai_qa"),
+                callback = function()
+                    UIManager:close(self.quick_dialog)
+                    self:showAIQuestionDialog()
                 end,
             },
         },

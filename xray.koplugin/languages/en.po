@@ -817,3 +817,34 @@ msgstr "Set a custom OpenAI-compatible endpoint.\nIf you enter only a base URL, 
 
 msgid "openai_endpoint_saved"
 msgstr "OpenAI-compatible endpoint saved"
+
+# ==============================
+# AI Q&A
+# ==============================
+
+msgid "menu_ai_qa"
+msgstr "AI Q&A"
+
+msgid "ai_qa_title"
+msgstr "Ask AI"
+
+msgid "ai_qa_hint"
+msgstr "Ask about this book or selected text"
+
+msgid "ai_qa_selected_text_desc"
+msgstr "Selected text:\n%s"
+
+msgid "ai_qa_waiting"
+msgstr "Asking %s...\n\nModel: %s\n\nPlease wait."
+
+msgid "ai_qa_answer_title"
+msgstr "AI Answer"
+
+msgid "ai_qa_no_question"
+msgstr "Please enter a question."
+
+msgid "ai_qa_no_api_key"
+msgstr "AI API key is not set.\n\nSet it in Menu → X-Ray → AI Settings."
+
+msgid "ai_qa_failed"
+msgstr "AI Q&A failed."
