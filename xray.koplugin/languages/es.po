@@ -677,7 +677,7 @@ msgid "menu_background_job"
 msgstr "Tarea de IA en segundo plano"
 
 msgid "background_job_started"
-msgstr "El análisis de IA se ejecuta en segundo plano. Puedes seguir leyendo."
+msgstr "El análisis de IA comenzó. El lector puede pausarse durante las solicitudes de red."
 
 msgid "background_job_done"
 msgstr "Análisis de IA completo. Los datos de X-Ray están listos."
@@ -763,6 +763,9 @@ msgstr "La clave API de IA no está configurada.\n\nConfigúrala en Menú → X-
 
 msgid "ai_qa_failed"
 msgstr "La pregunta a IA falló."
+
+msgid "ai_qa_default_selected_question"
+msgstr "Explica el texto seleccionado en el contexto de este libro."
 
 # ==============================
 # OPENAI-COMPATIBLE PROVIDERS

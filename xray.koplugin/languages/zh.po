@@ -849,6 +849,9 @@ msgstr "尚未设置 AI API Key。\n\n请在菜单 → X-Ray → AI 设置中配
 msgid "ai_qa_failed"
 msgstr "AI 问答失败。"
 
+msgid "ai_qa_default_selected_question"
+msgstr "结合本书上下文解释选中的文字。"
+
 # ==============================
 # AI BACKGROUND AND CONTEXT
 # ==============================
@@ -860,7 +863,7 @@ msgid "menu_background_job"
 msgstr "后台 AI 任务"
 
 msgid "background_job_started"
-msgstr "AI 分析已在后台运行，可继续阅读。"
+msgstr "AI 分析已启动。网络请求期间阅读器可能会短暂停顿。"
 
 msgid "background_job_done"
 msgstr "AI 分析完成，X-Ray 数据已准备好。"

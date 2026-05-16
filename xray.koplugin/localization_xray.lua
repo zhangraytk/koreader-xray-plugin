@@ -51,8 +51,7 @@ function Localization:getPluginDir()
         end
     end
 
-    self.plugin_dir = candidates[1] or "plugins/xray.koplugin"
-    return self.plugin_dir
+    return candidates[1] or "plugins/xray.koplugin"
 end
 
 function Localization:ensureDirectory(dir)
@@ -280,6 +279,7 @@ function Localization:t(key, ...)
             ai_qa_no_question = "Please enter a question.",
             ai_qa_no_api_key = "AI API key is not set.\n\nSet it in Menu → X-Ray → AI Settings.",
             ai_qa_failed = "AI Q&A failed.",
+            ai_qa_default_selected_question = "Explain the selected text in the context of this book.",
             provider_selected = "%s selected",
             gemini_model_saved = "Gemini model saved",
             gemini_custom_model = "Custom Gemini model",
@@ -295,7 +295,7 @@ function Localization:t(key, ...)
             analysis_mode_chunked = "Chunked text boost",
             menu_enrich_nearby_context = "Enrich characters from nearby context",
             menu_background_job = "Background AI job",
-            background_job_started = "AI analysis is running in the background. You can continue reading.",
+            background_job_started = "AI analysis started. The reader may pause during network requests.",
             background_job_done = "AI analysis complete. X-Ray data is ready.",
             background_job_failed = "AI analysis failed.",
             background_job_cancel = "Cancel current job",

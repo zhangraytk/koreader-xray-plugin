@@ -43,7 +43,12 @@ function JobManager:serialize(obj, indent, seen)
         return s .. indent .. "}"
     elseif t == "string" then
         return string.format("%q", obj)
-    elseif t == "number" or t == "boolean" then
+    elseif t == "number" then
+        if obj ~= obj then return "nil" end
+        if obj == math.huge then return "math.huge" end
+        if obj == -math.huge then return "-math.huge" end
+        return tostring(obj)
+    elseif t == "boolean" then
         return tostring(obj)
     end
     return "nil"
@@ -170,9 +175,10 @@ function JobManager:fail(plugin, message)
 end
 
 function JobManager:buildBaseContext()
+    local reading_percent = tonumber(self.state.reading_percent) or 100
     return {
-        reading_percent = self.state.reading_percent,
-        spoiler_free = self.state.reading_percent < 100,
+        reading_percent = reading_percent,
+        spoiler_free = reading_percent < 100,
         source_mode = self.state.analysis_mode,
         character_candidates = self.state.candidates,
         chapter_summaries = self.state.chapter_summaries,
@@ -371,8 +377,8 @@ function JobManager:processChunkedFullText(plugin)
         self:saveState(self.state.book_path)
 
         local context = {
-            reading_percent = self.state.reading_percent,
-            spoiler_free = self.state.reading_percent < 100,
+            reading_percent = tonumber(self.state.reading_percent) or 100,
+            spoiler_free = (tonumber(self.state.reading_percent) or 100) < 100,
             source_mode = "text_chunk",
             chunk_title = chunk.title,
             book_text = chunk.text,

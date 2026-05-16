@@ -33,47 +33,6 @@ local function firstText(value)
     return ""
 end
 
-local function shellQuote(text)
-    text = tostring(text or "")
-    return "'" .. text:gsub("'", "'\\''") .. "'"
-end
-
-local function readCommand(command, max_chars)
-    local handle = io.popen(command)
-    if not handle then return "" end
-    local chunks = {}
-    local total = 0
-    max_chars = max_chars or 120000
-    while total < max_chars do
-        local chunk = handle:read(math.min(8192, max_chars - total))
-        if not chunk or #chunk == 0 then break end
-        table.insert(chunks, chunk)
-        total = total + #chunk
-    end
-    handle:close()
-    return table.concat(chunks)
-end
-
-local function stripMarkup(text)
-    text = text or ""
-    text = text:gsub("<script.->.-</script>", " ")
-    text = text:gsub("<style.->.-</style>", " ")
-    text = text:gsub("<[^>]+>", " ")
-    local entities = {
-        nbsp = " ", amp = "&", lt = "<", gt = ">", quot = '"', apos = "'",
-    }
-    text = text:gsub("&([%a]+);", function(name)
-        return entities[name] or " "
-    end)
-    text = text:gsub("&#(%d+);", function(num)
-        local n = tonumber(num)
-        if n and n < 128 then return string.char(n) end
-        return " "
-    end)
-    text = text:gsub("%s+", " ")
-    return trim(text)
-end
-
 function TextAnalyzer:getBookRange(ui, reading_percent)
     local page_count = 0
     local ok, pages = pcall(function()
@@ -103,8 +62,16 @@ function TextAnalyzer:splitLongText(text, title, chunks)
     while start_pos <= #text do
         local end_pos = math.min(#text, start_pos + self.max_chunk_chars - 1)
         if end_pos < #text then
-            local paragraph_break = text:find("\n%s*\n", math.max(start_pos, end_pos - 1200))
-            if paragraph_break and paragraph_break < end_pos + 1200 then
+            local search_start = math.max(start_pos, end_pos - 1200)
+            local paragraph_break = nil
+            local pos = search_start
+            while pos <= end_pos do
+                local found = text:find("\n%s*\n", pos)
+                if not found or found > end_pos then break end
+                paragraph_break = found
+                pos = found + 1
+            end
+            if paragraph_break and paragraph_break >= start_pos then
                 end_pos = paragraph_break
             end
         end
@@ -261,7 +228,7 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
                 return chunks, epub_stats
             end
         end
-        table.insert(attempts, "epub_unzip:" .. tostring(#epub_text))
+        table.insert(attempts, tostring(epub_stats.method or "epub_zip") .. ":" .. tostring(epub_stats.error or #epub_text))
     end
 
     logger.warn("TextAnalyzer: Could not build text chunks")
@@ -368,55 +335,18 @@ function TextAnalyzer:getNearbyContext(ui, char_limit)
 end
 
 function TextAnalyzer:getTextFromEpubFile(book_path, reading_percent)
-    local stats = { method = "epub_unzip", book_path = book_path, files = 0 }
+    local stats = {
+        method = "epub_zip_unavailable",
+        book_path = book_path,
+        files = 0,
+        error = "no_portable_epub_zip_reader",
+    }
     if not book_path or #book_path == 0 then return "", stats end
 
-    local list_cmd = "/system/bin/unzip -l " .. shellQuote(book_path)
-    local list = readCommand(list_cmd, 200000)
-    local entries = {}
-    for line in list:gmatch("[^\r\n]+") do
-        local entry = line:match("^%s*%d+%s+%d%d%d%d%-%d%d%-%d%d%s+%d%d:%d%d%s+(.+)$")
-        if not entry and not line:match("^Archive:") and not line:match("^%s*Length") and not line:match("^%s*%-") then
-            entry = line:match("^%s*(%S.+)$")
-        end
-        if entry then
-            local lower = entry:lower()
-            if (lower:match("%.xhtml$") or lower:match("%.html$") or lower:match("%.htm$"))
-                and not lower:match("nav%.xhtml$")
-                and not lower:match("toc%.xhtml$")
-                and not lower:match("cover")
-            then
-                table.insert(entries, entry)
-            end
-        end
-    end
-
-    local max_chars = 120000
-    local raw_parts = {}
-    for _, entry in ipairs(entries) do
-        if stats.files >= 80 then break end
-        local cmd = "/system/bin/unzip -p " .. shellQuote(book_path) .. " " .. shellQuote(entry)
-        local raw = readCommand(cmd, 60000)
-        local text = stripMarkup(raw)
-        if #text > 0 then
-            table.insert(raw_parts, text)
-            stats.files = stats.files + 1
-        end
-        local current = table.concat(raw_parts, "\n\n")
-        if #current >= max_chars then
-            break
-        end
-    end
-
-    local combined = table.concat(raw_parts, "\n\n")
-    if reading_percent and reading_percent < 100 then
-        combined = combined:sub(1, math.max(1, math.floor(#combined * reading_percent / 100)))
-    end
-    if #combined > max_chars then
-        combined = combined:sub(1, max_chars)
-    end
-    stats.char_count = #combined
-    return combined, stats
+    -- Avoid shelling out to platform-specific unzip binaries from the reader
+    -- process. This fallback should be re-enabled only through a KOReader zip API.
+    stats.detail = "No portable KOReader EPUB zip reader is wired for this fallback"
+    return "", stats
 end
 
 function TextAnalyzer:diagnose(ui)
@@ -520,11 +450,37 @@ local function utf8Chars(text)
     return chars
 end
 
+local function utf8Codepoint(ch)
+    local b1, b2, b3, b4 = ch:byte(1, 4)
+    if not b1 then return nil end
+    if b1 < 0x80 then
+        return b1
+    elseif b1 >= 0xC2 and b1 <= 0xDF and b2 and b2 >= 0x80 and b2 <= 0xBF then
+        return (b1 - 0xC0) * 0x40 + (b2 - 0x80)
+    elseif b1 >= 0xE0 and b1 <= 0xEF and b2 and b3
+        and b2 >= 0x80 and b2 <= 0xBF
+        and b3 >= 0x80 and b3 <= 0xBF then
+        return (b1 - 0xE0) * 0x1000 + (b2 - 0x80) * 0x40 + (b3 - 0x80)
+    elseif b1 >= 0xF0 and b1 <= 0xF4 and b2 and b3 and b4
+        and b2 >= 0x80 and b2 <= 0xBF
+        and b3 >= 0x80 and b3 <= 0xBF
+        and b4 >= 0x80 and b4 <= 0xBF then
+        return (b1 - 0xF0) * 0x40000 + (b2 - 0x80) * 0x1000 + (b3 - 0x80) * 0x40 + (b4 - 0x80)
+    end
+    return nil
+end
+
 local function isCJKChar(ch)
-    local b1, b2, b3 = ch:byte(1, 3)
-    if not b1 or not b2 or not b3 then return false end
-    local code = (b1 - 224) * 4096 + (b2 - 128) * 64 + (b3 - 128)
-    return code >= 0x4e00 and code <= 0x9fff
+    local code = utf8Codepoint(ch)
+    if not code then return false end
+    return (code >= 0x4E00 and code <= 0x9FFF)
+        or (code >= 0x3400 and code <= 0x4DBF)
+        or (code >= 0x20000 and code <= 0x2A6DF)
+        or (code >= 0x2A700 and code <= 0x2B73F)
+        or (code >= 0x2B740 and code <= 0x2B81F)
+        or (code >= 0x2B820 and code <= 0x2CEAF)
+        or (code >= 0x2CEB0 and code <= 0x2EBEF)
+        or (code >= 0x30000 and code <= 0x3134F)
 end
 
 function TextAnalyzer:extractCJKNames(text, map)

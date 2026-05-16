@@ -829,7 +829,7 @@ msgid "menu_background_job"
 msgstr "Arka plan AI görevi"
 
 msgid "background_job_started"
-msgstr "AI analizi arka planda çalışıyor. Okumaya devam edebilirsiniz."
+msgstr "AI analizi başladı. Ağ istekleri sırasında okuyucu kısa süre duraklayabilir."
 
 msgid "background_job_done"
 msgstr "AI analizi tamamlandı. X-Ray verisi hazır."
@@ -915,6 +915,9 @@ msgstr "AI API anahtarı ayarlı değil.\n\nMenü → X-Ray → AI Ayarları bö
 
 msgid "ai_qa_failed"
 msgstr "AI Soru-Cevap başarısız oldu."
+
+msgid "ai_qa_default_selected_question"
+msgstr "Seçili metni bu kitabın bağlamında açıkla."
 
 # ==============================
 # OPENAI-COMPATIBLE PROVIDERS

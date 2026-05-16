@@ -1544,7 +1544,7 @@ function XRayPlugin:askAIQuestion(question, selected_text)
     end
 
     if #question == 0 then
-        question = "Explain the selected text in the context of this book."
+        question = self.loc:t("ai_qa_default_selected_question")
     end
 
     if not self.ai_helper then
@@ -2120,8 +2120,7 @@ function XRayPlugin:showCustomProviderEditor(provider_id)
                             table.insert(fields, field)
                             if #fields >= 6 then break end
                         end
-                        local thinking = self.ai_helper:normalizeThinkingMode(fields[5])
-                        local _, thinking_mode_value = self.ai_helper:normalizeThinkingMode(fields[5])
+                        local thinking, thinking_mode_value = self.ai_helper:normalizeThinkingMode(fields[5])
                         local data = {
                             name = fields[1],
                             endpoint = fields[2],

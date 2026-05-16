@@ -849,6 +849,9 @@ msgstr "AI API key is not set.\n\nSet it in Menu → X-Ray → AI Settings."
 msgid "ai_qa_failed"
 msgstr "AI Q&A failed."
 
+msgid "ai_qa_default_selected_question"
+msgstr "Explain the selected text in the context of this book."
+
 # ==============================
 # AI BACKGROUND AND CONTEXT
 # ==============================
@@ -860,7 +863,7 @@ msgid "menu_background_job"
 msgstr "Background AI job"
 
 msgid "background_job_started"
-msgstr "AI analysis is running in the background. You can continue reading."
+msgstr "AI analysis started. The reader may pause during network requests."
 
 msgid "background_job_done"
 msgstr "AI analysis complete. X-Ray data is ready."
