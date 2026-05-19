@@ -73,7 +73,7 @@ function CacheManager:saveCache(book_path, data)
     data.cache_version = "7.0"
     
     -- Serialize data
-    local success, err = pcall(function()
+    local success, saved = pcall(function()
         local f, open_err = io.open(cache_file, "w")
         
         if not f then
@@ -100,11 +100,16 @@ function CacheManager:saveCache(book_path, data)
     end)
     
     if not success then
-        logger.warn("CacheManager: Failed to save cache:", err or "unknown error")
+        logger.warn("CacheManager: Failed to save cache:", saved or "unknown error")
         return false
     end
-    
-    return success
+
+    if not saved then
+        logger.warn("CacheManager: Cache save did not complete")
+        return false
+    end
+
+    return true
 end
 
 -- Load book data from cache

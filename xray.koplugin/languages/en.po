@@ -1009,3 +1009,118 @@ msgstr "Local candidate boost"
 
 msgid "analysis_mode_chunked"
 msgstr "Chunked text boost"
+
+# ==============================
+# AI Q&A FOLLOW-UP AND CHARACTER MERGE
+# ==============================
+
+msgid "menu_gemini_settings"
+msgstr "Gemini settings"
+
+msgid "menu_chatgpt_settings"
+msgstr "ChatGPT settings"
+
+msgid "menu_chatgpt_model"
+msgstr "ChatGPT model"
+
+msgid "chatgpt_model_title"
+msgstr "ChatGPT model"
+
+msgid "chatgpt_model_hint"
+msgstr "Model name"
+
+msgid "chatgpt_model_desc"
+msgstr "Official OpenAI model name."
+
+msgid "chatgpt_model_saved"
+msgstr "ChatGPT model saved"
+
+msgid "menu_openai_compatible_settings"
+msgstr "OpenAI-compatible settings"
+
+msgid "menu_openai_compatible_key"
+msgstr "OpenAI-compatible API key"
+
+msgid "openai_compatible_key_title"
+msgstr "OpenAI-compatible API key"
+
+msgid "openai_compatible_key_hint"
+msgstr "sk-..."
+
+msgid "openai_compatible_key_desc"
+msgstr "API key for the configured OpenAI-compatible endpoint."
+
+msgid "openai_compatible_key_saved"
+msgstr "OpenAI-compatible API key saved"
+
+msgid "menu_ai_qa_result"
+msgstr "Last AI answer"
+
+msgid "ai_qa_no_answer"
+msgstr "No AI answer is available yet."
+
+msgid "ai_qa_actions_title"
+msgstr "AI answer ready"
+
+msgid "ai_qa_view_answer"
+msgstr "View answer"
+
+msgid "ai_qa_follow_up"
+msgstr "Follow up"
+
+msgid "ai_qa_follow_up_hint"
+msgstr "Ask a follow-up question"
+
+msgid "ai_qa_add_character"
+msgstr "Add to characters"
+
+msgid "ai_job_started"
+msgstr "AI task started: %s / %s"
+
+msgid "ai_job_running"
+msgstr "AI task is already running."
+
+msgid "ai_job_start_failed"
+msgstr "Could not start AI task."
+
+msgid "ai_job_result_ready"
+msgstr "AI result is ready."
+
+msgid "ai_job_cancel"
+msgstr "Cancel AI task"
+
+msgid "ai_job_cancelled"
+msgstr "AI task cancelled."
+
+msgid "ai_character_extract_failed"
+msgstr "Could not extract character JSON."
+
+msgid "ai_character_confirm_title"
+msgstr "Add character?"
+
+msgid "ai_character_conflict_with"
+msgstr "Possible conflict with existing character: %s"
+
+msgid "ai_character_merge_empty"
+msgstr "Merge empty fields"
+
+msgid "ai_character_overwrite_fields"
+msgstr "Overwrite selected fields"
+
+msgid "ai_character_add_new"
+msgstr "Add as new character"
+
+msgid "ai_character_saved"
+msgstr "Character saved"
+
+msgid "aliases"
+msgstr "Aliases"
+
+msgid "evidence"
+msgstr "Evidence"
+
+msgid "confidence"
+msgstr "Confidence"
+
+msgid "close"
+msgstr "Close"

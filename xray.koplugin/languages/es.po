@@ -857,3 +857,118 @@ msgstr "Mejora con candidatos locales"
 
 msgid "analysis_mode_chunked"
 msgstr "Mejora con texto por bloques"
+
+# ==============================
+# AI Q&A FOLLOW-UP AND CHARACTER MERGE
+# ==============================
+
+msgid "menu_gemini_settings"
+msgstr "Ajustes de Gemini"
+
+msgid "menu_chatgpt_settings"
+msgstr "Ajustes de ChatGPT"
+
+msgid "menu_chatgpt_model"
+msgstr "Modelo de ChatGPT"
+
+msgid "chatgpt_model_title"
+msgstr "Modelo de ChatGPT"
+
+msgid "chatgpt_model_hint"
+msgstr "Nombre del modelo"
+
+msgid "chatgpt_model_desc"
+msgstr "Nombre del modelo oficial de OpenAI."
+
+msgid "chatgpt_model_saved"
+msgstr "Modelo de ChatGPT guardado"
+
+msgid "menu_openai_compatible_settings"
+msgstr "Ajustes compatibles con OpenAI"
+
+msgid "menu_openai_compatible_key"
+msgstr "Clave API compatible con OpenAI"
+
+msgid "openai_compatible_key_title"
+msgstr "Clave API compatible con OpenAI"
+
+msgid "openai_compatible_key_hint"
+msgstr "sk-..."
+
+msgid "openai_compatible_key_desc"
+msgstr "Clave API para el endpoint compatible con OpenAI configurado."
+
+msgid "openai_compatible_key_saved"
+msgstr "Clave API compatible con OpenAI guardada"
+
+msgid "menu_ai_qa_result"
+msgstr "Ultima respuesta de IA"
+
+msgid "ai_qa_no_answer"
+msgstr "Aun no hay una respuesta de IA disponible."
+
+msgid "ai_qa_actions_title"
+msgstr "Respuesta de IA lista"
+
+msgid "ai_qa_view_answer"
+msgstr "Ver respuesta"
+
+msgid "ai_qa_follow_up"
+msgstr "Preguntar de nuevo"
+
+msgid "ai_qa_follow_up_hint"
+msgstr "Haz una pregunta de seguimiento"
+
+msgid "ai_qa_add_character"
+msgstr "Agregar a personajes"
+
+msgid "ai_job_started"
+msgstr "Tarea de IA iniciada: %s / %s"
+
+msgid "ai_job_running"
+msgstr "Ya hay una tarea de IA en ejecucion."
+
+msgid "ai_job_start_failed"
+msgstr "No se pudo iniciar la tarea de IA."
+
+msgid "ai_job_result_ready"
+msgstr "El resultado de IA esta listo."
+
+msgid "ai_job_cancel"
+msgstr "Cancelar tarea de IA"
+
+msgid "ai_job_cancelled"
+msgstr "Tarea de IA cancelada."
+
+msgid "ai_character_extract_failed"
+msgstr "No se pudo extraer JSON de personaje."
+
+msgid "ai_character_confirm_title"
+msgstr "Agregar personaje?"
+
+msgid "ai_character_conflict_with"
+msgstr "Posible conflicto con personaje existente: %s"
+
+msgid "ai_character_merge_empty"
+msgstr "Combinar campos vacios"
+
+msgid "ai_character_overwrite_fields"
+msgstr "Sobrescribir campos seleccionados"
+
+msgid "ai_character_add_new"
+msgstr "Agregar como personaje nuevo"
+
+msgid "ai_character_saved"
+msgstr "Personaje guardado"
+
+msgid "aliases"
+msgstr "Alias"
+
+msgid "evidence"
+msgstr "Evidencia"
+
+msgid "confidence"
+msgstr "Confianza"
+
+msgid "close"
+msgstr "Cerrar"

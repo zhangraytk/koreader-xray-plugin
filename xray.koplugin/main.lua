@@ -237,6 +237,186 @@ function XRayPlugin:getJobManager()
     return self.job_manager
 end
 
+function XRayPlugin:getCurrentBookPath()
+    return self.ui and self.ui.document and self.ui.document.file or nil
+end
+
+function XRayPlugin:isCurrentBook(book_path)
+    return book_path and self:getCurrentBookPath() == book_path
+end
+
+function XRayPlugin:formatAIError(default_key, error_code, error_msg)
+    if error_code == "error_no_api_key" then
+        return self.loc:t("ai_qa_no_api_key")
+    elseif error_code == "error_cancelled" then
+        return self.loc:t("ai_job_cancelled")
+    elseif error_msg and #tostring(error_msg) > 0 then
+        return tostring(error_msg)
+    end
+    return self.loc:t(default_key)
+end
+
+function XRayPlugin:getCompactCharactersForAI()
+    local compact = {}
+    for _, char in ipairs(self.characters or {}) do
+        if type(char) == "table" and char.name and #tostring(char.name) > 0 then
+            table.insert(compact, {
+                name = tostring(char.name),
+                aliases = type(char.aliases) == "table" and char.aliases or {},
+            })
+        end
+        if #compact >= 80 then
+            break
+        end
+    end
+    return compact
+end
+
+function XRayPlugin:saveCurrentXRayCache()
+    local book_path = self:getCurrentBookPath()
+    if not book_path then return false end
+    if not self.cache_manager then
+        local CacheManager = require("cachemanager")
+        self.cache_manager = CacheManager:new()
+    end
+    self.book_data = self.book_data or {}
+    self.book_data.characters = self.characters or {}
+    self.book_data.locations = self.locations or {}
+    self.book_data.themes = self.themes or {}
+    self.book_data.timeline = self.timeline or {}
+    self.book_data.historical_figures = self.historical_figures or {}
+    self.book_data.summary = self.summary or self.book_data.summary
+    if self.author_info then
+        self.book_data.author_info = self.author_info
+    end
+    return self.cache_manager:saveCache(book_path, self.book_data)
+end
+
+function XRayPlugin:getActiveAIJob(kind, book_path)
+    local jobs = self.ai_jobs or {}
+    local job = jobs[kind]
+    if job and job.book_path == book_path and job.status == "running" then
+        return job
+    end
+    return nil
+end
+
+function XRayPlugin:showAIJobRunning(kind)
+    local book_path = self:getCurrentBookPath()
+    local job = self:getActiveAIJob(kind, book_path)
+    local text = self.loc:t("ai_job_running")
+    if job and job.label then
+        text = text .. "\n\n" .. job.label
+    end
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dialog
+    dialog = ButtonDialog:new{
+        title = text,
+        buttons = {
+            {
+                {
+                    text = self.loc:t("ai_job_cancel"),
+                    callback = function()
+                        if job then job.cancelled = true end
+                        UIManager:close(dialog)
+                        UIManager:show(InfoMessage:new{
+                            text = self.loc:t("ai_job_cancelled"),
+                            timeout = 3,
+                        })
+                    end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("close"),
+                    callback = function()
+                        UIManager:close(dialog)
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function XRayPlugin:startSimpleAIJob(kind, book_path, label, started_text, task, on_complete)
+    self.ai_jobs = self.ai_jobs or {}
+    if self:getActiveAIJob(kind, book_path) then
+        return false, "already_running"
+    end
+
+    local job = {
+        kind = kind,
+        book_path = book_path,
+        label = label,
+        status = "running",
+        started_at = os.time(),
+        cancelled = false,
+    }
+    self.ai_jobs[kind] = job
+
+    UIManager:show(InfoMessage:new{
+        text = started_text or self.loc:t("ai_job_started"),
+        timeout = 3,
+    })
+
+    UIManager:scheduleIn(0.1, function()
+        local trap_ok, Trapper = pcall(require, "ui/trapper")
+        if trap_ok and Trapper and Trapper.wrap and Trapper.dismissableRunInSubprocess then
+            Trapper:wrap(function()
+                local completed, result = Trapper:dismissableRunInSubprocess(function()
+                    local success, data = pcall(task)
+                    if success then
+                        return data
+                    end
+                    return {
+                        ok = false,
+                        error_code = "error_exception",
+                        error_msg = tostring(data),
+                    }
+                end, true)
+
+                if job.cancelled then
+                    job.status = "cancelled"
+                    return
+                end
+                job.status = "done"
+
+                if completed == false then
+                    result = {
+                        ok = false,
+                        error_code = "error_cancelled",
+                        error_msg = self.loc:t("ai_job_cancelled"),
+                    }
+                end
+
+                if on_complete then
+                    on_complete(result)
+                end
+            end)
+            return
+        end
+
+        local ok, result = pcall(task)
+        if not ok then
+            result = {
+                ok = false,
+                error_code = "error_exception",
+                error_msg = tostring(result),
+            }
+        end
+        if job.cancelled then
+            job.status = "cancelled"
+            return
+        end
+        job.status = "done"
+        if on_complete then
+            on_complete(result)
+        end
+    end)
+
+    return true
+end
 function XRayPlugin:loadBackgroundJob()
     local job_manager = self:getJobManager()
     local book_path = self.ui and self.ui.document and self.ui.document.file
@@ -503,6 +683,13 @@ function XRayPlugin:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = self.loc:t("menu_ai_qa_result"),
+                keep_menu_open = true,
+                callback = function()
+                    self:showAIQuestionActions()
+                end,
+            },
+            {
                 text = self.loc:t("menu_fetch_ai"),
                 keep_menu_open = true,
                 callback = function()
@@ -528,54 +715,86 @@ function XRayPlugin:addToMainMenu(menu_items)
                 keep_menu_open = true,
                 sub_item_table = {
                     {
-                        text = self.loc:t("menu_gemini_key"), 
+                        text = self.loc:t("menu_gemini_settings"),
                         keep_menu_open = true,
-                        callback = function()
-                            self:setGeminiAPIKey()
-                        end,
-                    },
-                    {
-                        text = self.loc:t("menu_gemini_model"), 
-                        keep_menu_open = true,
-                        callback = function()
-                            self:selectGeminiModel()
-                        end,
+                        sub_item_table = {
+                            {
+                                text = self.loc:t("menu_gemini_key"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:setGeminiAPIKey()
+                                end,
+                            },
+                            {
+                                text = self.loc:t("menu_gemini_model"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:selectGeminiModel()
+                                end,
+                            },
+                        },
                     },
                     { separator = true },
                     {
-                        text = self.loc:t("menu_chatgpt_key"), 
+                        text = self.loc:t("menu_chatgpt_settings"),
                         keep_menu_open = true,
-                        callback = function()
-                            self:setChatGPTAPIKey()
-                        end,
+                        sub_item_table = {
+                            {
+                                text = self.loc:t("menu_chatgpt_key"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:setChatGPTAPIKey()
+                                end,
+                            },
+                            {
+                                text = self.loc:t("menu_chatgpt_model"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:setProviderModelDialog("chatgpt", "chatgpt_model")
+                                end,
+                            },
+                        },
                     },
                     {
-                        text = self.loc:t("menu_openai_model"),
+                        text = self.loc:t("menu_openai_compatible_settings"),
                         keep_menu_open = true,
-                        callback = function()
-                            self:setOpenAICompatibleModel()
-                        end,
-                    },
-                    {
-                        text = self.loc:t("menu_openai_thinking"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:selectOpenAIThinkingMode()
-                        end,
-                    },
-                    {
-                        text = self.loc:t("menu_openai_effort"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:selectOpenAIReasoningEffort()
-                        end,
-                    },
-                    {
-                        text = self.loc:t("menu_openai_endpoint"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:setOpenAICompatibleEndpoint()
-                        end,
+                        sub_item_table = {
+                            {
+                                text = self.loc:t("menu_openai_compatible_key"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:setOpenAICompatibleAPIKey()
+                                end,
+                            },
+                            {
+                                text = self.loc:t("menu_openai_endpoint"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:setOpenAICompatibleEndpoint()
+                                end,
+                            },
+                            {
+                                text = self.loc:t("menu_openai_model"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:setOpenAICompatibleModel()
+                                end,
+                            },
+                            {
+                                text = self.loc:t("menu_openai_thinking"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:selectOpenAIThinkingMode()
+                                end,
+                            },
+                            {
+                                text = self.loc:t("menu_openai_effort"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:selectOpenAIReasoningEffort()
+                                end,
+                            },
+                        },
                     },
                     {
                         text = self.loc:t("menu_custom_providers"),
@@ -971,12 +1190,65 @@ function XRayPlugin:fetchFromAI()
     -- Do not block on KOReader's NetworkMgr:isOnline(): it can be stale on
     -- devices using local endpoints, proxies, or already-connected Wi-Fi.
     -- Provider calls still report real transport/API errors later.
-    self:continueWithFetch(100, "metadata")
+    self:askSpoilerPreference()
 end
 
 function XRayPlugin:askSpoilerPreference()
     logger.info("XRayPlugin: Asking spoiler preference")
-    self:continueWithFetch(100, "metadata")
+
+    local current_page = 1
+    local total_pages = 1
+    if self.ui and self.ui.getCurrentPage then
+        current_page = tonumber(self.ui:getCurrentPage()) or 1
+    end
+    if self.ui and self.ui.document and self.ui.document.getPageCount then
+        total_pages = tonumber(self.ui.document:getPageCount()) or 1
+    end
+    if total_pages <= 0 then total_pages = 1 end
+    local reading_percent = math.floor((current_page / total_pages) * 100)
+    if reading_percent < 1 then reading_percent = 1 end
+    if reading_percent > 100 then reading_percent = 100 end
+
+    local spoiler_menu
+    spoiler_menu = Menu:new{
+        title = self.loc:t("spoiler_preference_title"),
+        item_table = {
+            {
+                text = string.format(self.loc:t("spoiler_free_option"), reading_percent),
+                callback = function()
+                    logger.info("XRayPlugin: User chose spoiler-free mode")
+                    UIManager:close(spoiler_menu)
+                    self:askAnalysisModePreference(reading_percent)
+                end,
+            },
+            {
+                text = self.loc:t("full_book_option"),
+                callback = function()
+                    logger.info("XRayPlugin: User chose full book mode")
+                    UIManager:close(spoiler_menu)
+                    self:askAnalysisModePreference(100)
+                end,
+            },
+            {
+                text = self.loc:t("cancel"),
+                callback = function()
+                    logger.info("XRayPlugin: User cancelled fetch")
+                    UIManager:close(spoiler_menu)
+                    UIManager:show(InfoMessage:new{
+                        text = self.loc:t("fetch_cancelled"),
+                        timeout = 3,
+                    })
+                end,
+            },
+        },
+        is_borderless = true,
+        is_popout = false,
+        title_bar_fm_style = true,
+        width = Screen:getWidth(),
+        height = Screen:getHeight(),
+    }
+
+    UIManager:show(spoiler_menu)
 end
 
 function XRayPlugin:askAnalysisModePreference(reading_percent)
@@ -1530,12 +1802,12 @@ function XRayPlugin:showAIQuestionDialog(selected_text)
     input_dialog:onShowKeyboard()
 end
 
-function XRayPlugin:askAIQuestion(question, selected_text)
+function XRayPlugin:askAIQuestion(question, selected_text, is_followup)
     question = question or ""
     question = question:match("^%s*(.-)%s*$") or ""
     selected_text = selected_text or ""
 
-    if #question == 0 and #selected_text == 0 then
+    if #question == 0 and #selected_text == 0 and not is_followup then
         UIManager:show(InfoMessage:new{
             text = self.loc:t("ai_qa_no_question"),
             timeout = 3,
@@ -1543,7 +1815,13 @@ function XRayPlugin:askAIQuestion(question, selected_text)
         return
     end
 
-    if #question == 0 then
+    if #question == 0 and is_followup then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_no_question"),
+            timeout = 3,
+        })
+        return
+    elseif #question == 0 then
         question = self.loc:t("ai_qa_default_selected_question")
     end
 
@@ -1563,44 +1841,478 @@ function XRayPlugin:askAIQuestion(question, selected_text)
         return
     end
 
+    local book_path = self:getCurrentBookPath()
+    if self:getActiveAIJob("qa", book_path) then
+        self:showAIJobRunning("qa")
+        return
+    end
+
+    if not is_followup or not self.ai_qa_session then
+        self.ai_qa_session = {
+            book_path = book_path,
+            selected_text = selected_text,
+            context = self:getAIQuestionContext(selected_text),
+            history = {},
+        }
+    else
+        self.ai_qa_session.book_path = book_path
+        self.ai_qa_session.selected_text = self.ai_qa_session.selected_text or selected_text
+        self.ai_qa_session.context = self.ai_qa_session.context or self:getAIQuestionContext(selected_text)
+        self.ai_qa_session.history = self.ai_qa_session.history or {}
+    end
+
     local provider_name = provider_config.name or "AI"
     local model = provider_config.model or self.loc:t("unknown_model")
-    local wait_msg = InfoMessage:new{
-        text = string.format(self.loc:t("ai_qa_waiting"), provider_name, model),
-        timeout = 60,
+    local context = self:getAIQuestionContext(self.ai_qa_session.selected_text or selected_text)
+    context.history = self.ai_qa_session.history
+    context.selected_text = self.ai_qa_session.selected_text or selected_text
+
+    local request = {
+        book_path = book_path,
+        question = question,
+        selected_provider = selected_provider,
+        provider_name = provider_name,
+        model = model,
+        context = context,
     }
-    UIManager:show(wait_msg)
 
-    UIManager:scheduleIn(0.1, function()
-        local answer, error_code, error_msg = self.ai_helper:askQuestion(
-            question,
-            selected_provider,
-            self:getAIQuestionContext(selected_text)
-        )
-
-        if wait_msg then UIManager:close(wait_msg) end
-
-        if not answer then
-            local error_text = self.loc:t("ai_qa_failed")
-            if error_code == "error_no_api_key" then
-                error_text = self.loc:t("ai_qa_no_api_key")
-            elseif error_msg then
-                error_text = error_text .. "\n\n" .. error_msg
+    local started, err = self:startSimpleAIJob(
+        "qa",
+        book_path,
+        provider_name .. " / " .. model,
+        string.format(self.loc:t("ai_job_started"), provider_name, model),
+        function()
+            local AIHelper = require("aihelper")
+            AIHelper:init()
+            local answer, error_code, error_msg = AIHelper:askQuestion(
+                request.question,
+                request.selected_provider,
+                request.context
+            )
+            if not answer then
+                return {
+                    ok = false,
+                    error_code = error_code,
+                    error_msg = error_msg,
+                }
             end
-            UIManager:show(InfoMessage:new{
-                text = error_text,
-                timeout = 7,
-            })
-            return
+            return {
+                ok = true,
+                answer = answer,
+            }
+        end,
+        function(result)
+            self:onAIQuestionJobComplete(result, request)
         end
+    )
 
-        local TextViewer = require("ui/widget/textviewer")
-        UIManager:show(TextViewer:new{
-            title = self.loc:t("ai_qa_answer_title"),
-            text = answer,
-            justified = false,
+    if not started then
+        if err == "already_running" then
+            self:showAIJobRunning("qa")
+        else
+            UIManager:show(InfoMessage:new{
+                text = self.loc:t("ai_job_start_failed"),
+                timeout = 4,
+            })
+        end
+    end
+end
+
+function XRayPlugin:onAIQuestionJobComplete(result, request)
+    if not self:isCurrentBook(request.book_path) then
+        logger.warn("XRayPlugin: Ignoring Q&A result for inactive book")
+        return
+    end
+
+    if not result or not result.ok or not result.answer then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_failed") .. "\n\n" ..
+                self:formatAIError("ai_qa_failed", result and result.error_code, result and result.error_msg),
+            timeout = 7,
         })
-    end)
+        return
+    end
+
+    self.ai_qa_session = self.ai_qa_session or {
+        book_path = request.book_path,
+        context = request.context,
+        selected_text = request.context and request.context.selected_text or "",
+        history = {},
+    }
+    self.ai_qa_session.history = self.ai_qa_session.history or {}
+    table.insert(self.ai_qa_session.history, {
+        question = request.question,
+        answer = result.answer,
+        created_at = os.time(),
+    })
+    while #self.ai_qa_session.history > 6 do
+        table.remove(self.ai_qa_session.history, 1)
+    end
+    self.ai_qa_session.last_question = request.question
+    self.ai_qa_session.last_answer = result.answer
+    self.ai_qa_session.provider = request.selected_provider
+
+    UIManager:show(InfoMessage:new{
+        text = self.loc:t("ai_job_result_ready"),
+        timeout = 3,
+    })
+    self:showAIQuestionActions()
+end
+
+function XRayPlugin:showAIQuestionActions()
+    if not self.ai_qa_session or not self.ai_qa_session.last_answer then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_no_answer"),
+            timeout = 3,
+        })
+        return
+    end
+
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local preview = self.ai_qa_session.last_answer
+    if #preview > 500 then
+        preview = preview:sub(1, 500) .. "..."
+    end
+
+    local action_dialog
+    action_dialog = ButtonDialog:new{
+        title = self.loc:t("ai_qa_actions_title") .. "\n\n" .. preview,
+        buttons = {
+            {
+                {
+                    text = self.loc:t("ai_qa_view_answer"),
+                    callback = function()
+                        UIManager:close(action_dialog)
+                        self:showAIAnswer()
+                    end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("ai_qa_follow_up"),
+                    callback = function()
+                        UIManager:close(action_dialog)
+                        self:showAIQuestionFollowupDialog()
+                    end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("ai_qa_add_character"),
+                    callback = function()
+                        UIManager:close(action_dialog)
+                        self:startCharacterExtractionFromQA()
+                    end,
+                },
+            },
+            {
+                {
+                    text = self.loc:t("close"),
+                    callback = function()
+                        UIManager:close(action_dialog)
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(action_dialog)
+end
+
+function XRayPlugin:showAIAnswer()
+    if not self.ai_qa_session or not self.ai_qa_session.last_answer then
+        return
+    end
+    local TextViewer = require("ui/widget/textviewer")
+    UIManager:show(TextViewer:new{
+        title = self.loc:t("ai_qa_answer_title"),
+        text = self.ai_qa_session.last_answer,
+        justified = false,
+    })
+end
+
+function XRayPlugin:showAIQuestionFollowupDialog()
+    if not self.ai_qa_session then return end
+    local InputDialog = require("ui/widget/inputdialog")
+    local description = self.ai_qa_session.last_answer or ""
+    if #description > 500 then
+        description = description:sub(1, 500) .. "..."
+    end
+
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = self.loc:t("ai_qa_follow_up"),
+        input = "",
+        input_hint = self.loc:t("ai_qa_follow_up_hint"),
+        description = description,
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function()
+                        UIManager:close(input_dialog)
+                    end,
+                },
+                {
+                    text = self.loc:t("ai_qa_follow_up"),
+                    is_enter_default = true,
+                    callback = function()
+                        local followup = input_dialog:getInputText() or ""
+                        UIManager:close(input_dialog)
+                        self:askAIQuestion(followup, self.ai_qa_session.selected_text or "", true)
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
+function XRayPlugin:startCharacterExtractionFromQA()
+    if not self.ai_qa_session or not self.ai_qa_session.last_answer then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_no_answer"),
+            timeout = 3,
+        })
+        return
+    end
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local book_path = self:getCurrentBookPath()
+    if self:getActiveAIJob("character_extract", book_path) then
+        self:showAIJobRunning("character_extract")
+        return
+    end
+
+    local selected_provider = self.ai_provider or self.ai_helper.default_provider or self.ai_qa_session.provider or "gemini"
+    local provider_config = self.ai_helper.providers[selected_provider]
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_qa_no_api_key"),
+            timeout = 5,
+        })
+        return
+    end
+
+    local request = {
+        book_path = book_path,
+        selected_provider = selected_provider,
+        question = self.ai_qa_session.last_question or "",
+        answer = self.ai_qa_session.last_answer or "",
+        selected_text = self.ai_qa_session.selected_text or "",
+        existing_characters = self:getCompactCharactersForAI(),
+        provider_name = provider_config.name or "AI",
+        model = provider_config.model or self.loc:t("unknown_model"),
+    }
+
+    local started, err = self:startSimpleAIJob(
+        "character_extract",
+        book_path,
+        request.provider_name .. " / " .. request.model,
+        string.format(self.loc:t("ai_job_started"), request.provider_name, request.model),
+        function()
+            local AIHelper = require("aihelper")
+            AIHelper:init()
+            local candidate, error_code, error_msg = AIHelper:extractCharacterJSON(
+                request.selected_provider,
+                {
+                    question = request.question,
+                    answer = request.answer,
+                    selected_text = request.selected_text,
+                    existing_characters = request.existing_characters,
+                }
+            )
+            if not candidate then
+                return {
+                    ok = false,
+                    error_code = error_code,
+                    error_msg = error_msg,
+                }
+            end
+            return {
+                ok = true,
+                candidate = candidate,
+            }
+        end,
+        function(result)
+            self:onCharacterExtractComplete(result, request)
+        end
+    )
+
+    if not started then
+        if err == "already_running" then
+            self:showAIJobRunning("character_extract")
+        else
+            UIManager:show(InfoMessage:new{
+                text = self.loc:t("ai_job_start_failed"),
+                timeout = 4,
+            })
+        end
+    end
+end
+
+function XRayPlugin:onCharacterExtractComplete(result, request)
+    if not self:isCurrentBook(request.book_path) then
+        logger.warn("XRayPlugin: Ignoring character extraction result for inactive book")
+        return
+    end
+
+    if not result or not result.ok or not result.candidate then
+        UIManager:show(InfoMessage:new{
+            text = self.loc:t("ai_character_extract_failed") .. "\n\n" ..
+                self:formatAIError("ai_character_extract_failed", result and result.error_code, result and result.error_msg),
+            timeout = 7,
+        })
+        return
+    end
+
+    self:confirmApplyCharacter(result.candidate)
+end
+
+function XRayPlugin:normalizeCharacterName(name)
+    if type(name) ~= "string" then return "" end
+    return name:lower():gsub("%s+", ""):gsub("[\"'`“”‘’]", "")
+end
+
+function XRayPlugin:findCharacterConflict(candidate)
+    local target = self:normalizeCharacterName(candidate.merge_target or "")
+    local names = {}
+    names[self:normalizeCharacterName(candidate.name)] = true
+    if type(candidate.aliases) == "table" then
+        for _, alias in ipairs(candidate.aliases) do
+            names[self:normalizeCharacterName(alias)] = true
+        end
+    end
+
+    for index, char in ipairs(self.characters or {}) do
+        local existing_name = self:normalizeCharacterName(char.name or "")
+        if existing_name ~= "" and (names[existing_name] or (target ~= "" and existing_name == target)) then
+            return char, index
+        end
+        if type(char.aliases) == "table" then
+            for _, alias in ipairs(char.aliases) do
+                local existing_alias = self:normalizeCharacterName(alias)
+                if existing_alias ~= "" and names[existing_alias] then
+                    return char, index
+                end
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+function XRayPlugin:formatCharacterCandidate(candidate, existing)
+    local aliases = ""
+    if type(candidate.aliases) == "table" and #candidate.aliases > 0 then
+        aliases = table.concat(candidate.aliases, ", ")
+    end
+    local text = string.format(
+        "%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %.2f",
+        self.loc:t("character_name"), candidate.name or "",
+        self.loc:t("aliases"), aliases,
+        self.loc:t("role"), candidate.role or "",
+        self.loc:t("description"), candidate.description or "",
+        self.loc:t("evidence"), candidate.evidence or "",
+        self.loc:t("confidence"), tonumber(candidate.confidence) or 0
+    )
+    if existing then
+        text = text .. "\n\n" .. string.format(self.loc:t("ai_character_conflict_with"), existing.name or "")
+    end
+    return text
+end
+
+function XRayPlugin:confirmApplyCharacter(candidate)
+    self.characters = self.characters or {}
+    local existing, existing_index = self:findCharacterConflict(candidate)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dialog
+
+    local function apply(mode)
+        UIManager:close(dialog)
+        self:applyCharacterCandidate(candidate, existing_index, mode)
+    end
+
+    local buttons
+    if existing then
+        buttons = {
+            {{ text = self.loc:t("ai_character_merge_empty"), callback = function() apply("merge_empty") end }},
+            {{ text = self.loc:t("ai_character_overwrite_fields"), callback = function() apply("overwrite") end }},
+            {{ text = self.loc:t("ai_character_add_new"), callback = function() apply("add") end }},
+            {{ text = self.loc:t("cancel"), callback = function() UIManager:close(dialog) end }},
+        }
+    else
+        buttons = {
+            {{ text = self.loc:t("ai_character_add_new"), callback = function() apply("add") end }},
+            {{ text = self.loc:t("cancel"), callback = function() UIManager:close(dialog) end }},
+        }
+    end
+
+    dialog = ButtonDialog:new{
+        title = self.loc:t("ai_character_confirm_title") .. "\n\n" .. self:formatCharacterCandidate(candidate, existing),
+        buttons = buttons,
+    }
+    UIManager:show(dialog)
+end
+
+function XRayPlugin:mergeAliases(target, aliases)
+    if type(aliases) ~= "table" or #aliases == 0 then return end
+    target.aliases = target.aliases or {}
+    local seen = {}
+    for _, alias in ipairs(target.aliases) do
+        seen[self:normalizeCharacterName(alias)] = true
+    end
+    for _, alias in ipairs(aliases) do
+        local key = self:normalizeCharacterName(alias)
+        if key ~= "" and not seen[key] then
+            table.insert(target.aliases, alias)
+            seen[key] = true
+        end
+    end
+end
+
+function XRayPlugin:applyCharacterCandidate(candidate, existing_index, mode)
+    self.characters = self.characters or {}
+    local fields = { "role", "description", "gender", "occupation", "evidence", "confidence" }
+    local target
+
+    if mode == "add" or not existing_index then
+        target = {
+            name = candidate.name,
+            aliases = candidate.aliases or {},
+            role = candidate.role or "",
+            description = candidate.description or "",
+            gender = candidate.gender or "",
+            occupation = candidate.occupation or "",
+            evidence = candidate.evidence or "",
+            confidence = candidate.confidence or 0,
+        }
+        table.insert(self.characters, target)
+    else
+        target = self.characters[existing_index]
+        for _, field in ipairs(fields) do
+            local value = candidate[field]
+            if value ~= nil and tostring(value) ~= "" then
+                if mode == "overwrite" or target[field] == nil or tostring(target[field]) == "" then
+                    target[field] = value
+                end
+            end
+        end
+        self:mergeAliases(target, candidate.aliases)
+    end
+
+    self.book_data = self.book_data or {}
+    self.book_data.characters = self.characters
+    local saved = self:saveCurrentXRayCache()
+    UIManager:show(InfoMessage:new{
+        text = (saved and self.loc:t("ai_character_saved") or self.loc:t("cache_save_failed")) .. "\n\n" .. (target.name or ""),
+        timeout = 4,
+    })
 end
 
 function XRayPlugin:setGeminiAPIKey()
@@ -1710,7 +2422,7 @@ function XRayPlugin:setChatGPTAPIKey()
     input_dialog:onShowKeyboard()
 end
 
-function XRayPlugin:setOpenAICompatibleModel()
+function XRayPlugin:setOpenAICompatibleAPIKey()
     local InputDialog = require("ui/widget/inputdialog")
 
     if not self.ai_helper then
@@ -1719,14 +2431,67 @@ function XRayPlugin:setOpenAICompatibleModel()
         self.ai_helper:init()
     end
 
-    local current_model = self.ai_helper.providers.chatgpt.model or "gpt-4o-mini"
+    local provider = "openai_compatible"
+    local current_key = self.ai_helper.providers[provider].api_key or ""
 
     local input_dialog
     input_dialog = InputDialog:new{
-        title = self.loc:t("openai_model_title"),
+        title = self.loc:t("openai_compatible_key_title"),
+        input = current_key,
+        input_hint = self.loc:t("openai_compatible_key_hint"),
+        description = self.loc:t("openai_compatible_key_desc"),
+        buttons = {
+            {
+                {
+                    text = self.loc:t("cancel"),
+                    callback = function()
+                        UIManager:close(input_dialog)
+                    end,
+                },
+                {
+                    text = self.loc:t("save"),
+                    is_enter_default = true,
+                    callback = function()
+                        local api_key = input_dialog:getInputText()
+                        if api_key and #api_key > 0 then
+                            self.ai_helper:setAPIKey(provider, api_key)
+                            self.ai_provider = provider
+                            UIManager:show(InfoMessage:new{
+                                text = self.loc:t("openai_compatible_key_saved"),
+                                timeout = 3,
+                            })
+                        end
+                        UIManager:close(input_dialog)
+                    end,
+                },
+            }
+        },
+    }
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
+function XRayPlugin:setProviderModelDialog(provider, loc_prefix)
+    local InputDialog = require("ui/widget/inputdialog")
+
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+
+    local provider_config = self.ai_helper.providers[provider]
+    if not provider_config then
+        return
+    end
+
+    local current_model = provider_config.model or "gpt-4o-mini"
+    local input_dialog
+    input_dialog = InputDialog:new{
+        title = self.loc:t(loc_prefix .. "_title"),
         input = current_model,
-        input_hint = self.loc:t("openai_model_hint"),
-        description = self.loc:t("openai_model_desc"),
+        input_hint = self.loc:t(loc_prefix .. "_hint"),
+        description = self.loc:t(loc_prefix .. "_desc"),
         buttons = {
             {
                 {
@@ -1741,11 +2506,11 @@ function XRayPlugin:setOpenAICompatibleModel()
                     callback = function()
                         local model = input_dialog:getInputText()
                         if model and #model > 0 then
-                            local success = self.ai_helper:setChatGPTModel(model)
+                            local success = self.ai_helper:setProviderModel(provider, model)
                             if success then
-                                self.ai_provider = "chatgpt"
+                                self.ai_provider = provider
                                 UIManager:show(InfoMessage:new{
-                                    text = self.loc:t("openai_model_saved"),
+                                    text = self.loc:t(loc_prefix .. "_saved"),
                                     timeout = 3,
                                 })
                             end
@@ -1760,6 +2525,10 @@ function XRayPlugin:setOpenAICompatibleModel()
     input_dialog:onShowKeyboard()
 end
 
+function XRayPlugin:setOpenAICompatibleModel()
+    self:setProviderModelDialog("openai_compatible", "openai_model")
+end
+
 function XRayPlugin:selectOpenAIThinkingMode()
     local ButtonDialog = require("ui/widget/buttondialog")
 
@@ -1769,12 +2538,13 @@ function XRayPlugin:selectOpenAIThinkingMode()
         self.ai_helper:init()
     end
 
-    local current = self.ai_helper:getThinkingMode(self.ai_helper.providers.chatgpt)
+    local provider = "openai_compatible"
+    local current = self.ai_helper:getThinkingMode(self.ai_helper.providers[provider])
     local thinking_dialog
     local function saveThinking(mode)
-        local success = self.ai_helper:setChatGPTThinking(mode)
+        local success = self.ai_helper:setProviderThinking(provider, mode)
         if success then
-            self.ai_provider = "chatgpt"
+            self.ai_provider = provider
             local message = self.loc:t("openai_thinking_omitted")
             if mode == "enabled" then
                 message = self.loc:t("openai_thinking_enabled")
@@ -1824,12 +2594,13 @@ function XRayPlugin:selectOpenAIReasoningEffort()
         self.ai_helper:init()
     end
 
-    local current = self.ai_helper.providers.chatgpt.reasoning_effort or "high"
+    local provider = "openai_compatible"
+    local current = self.ai_helper.providers[provider].reasoning_effort or "high"
     local effort_dialog
     local function saveEffort(effort)
-        local success = self.ai_helper:setChatGPTReasoningEffort(effort)
+        local success = self.ai_helper:setProviderReasoningEffort(provider, effort)
         if success then
-            self.ai_provider = "chatgpt"
+            self.ai_provider = provider
             UIManager:show(InfoMessage:new{
                 text = string.format(self.loc:t("openai_effort_saved"), effort),
                 timeout = 3,
@@ -1958,7 +2729,8 @@ function XRayPlugin:setOpenAICompatibleEndpoint()
         self.ai_helper:init()
     end
 
-    local current_endpoint = self.ai_helper.providers.chatgpt.endpoint or "https://api.openai.com/v1/chat/completions"
+    local provider = "openai_compatible"
+    local current_endpoint = self.ai_helper.providers[provider].endpoint or "https://api.openai.com/v1/chat/completions"
 
     local input_dialog
     input_dialog = InputDialog:new{
@@ -1980,9 +2752,9 @@ function XRayPlugin:setOpenAICompatibleEndpoint()
                     callback = function()
                         local endpoint = input_dialog:getInputText()
                         if endpoint and #endpoint > 0 then
-                            local success = self.ai_helper:setChatGPTEndpoint(endpoint)
+                            local success = self.ai_helper:setProviderEndpoint(provider, endpoint)
                             if success then
-                                self.ai_provider = "chatgpt"
+                                self.ai_provider = provider
                                 UIManager:show(InfoMessage:new{
                                     text = self.loc:t("openai_endpoint_saved"),
                                     timeout = 3,

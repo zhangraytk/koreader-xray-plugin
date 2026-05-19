@@ -1009,3 +1009,118 @@ msgstr "Yerel aday geliştirme"
 
 msgid "analysis_mode_chunked"
 msgstr "Parçalı metin geliştirme"
+
+# ==============================
+# AI Q&A FOLLOW-UP AND CHARACTER MERGE
+# ==============================
+
+msgid "menu_gemini_settings"
+msgstr "Gemini ayarlari"
+
+msgid "menu_chatgpt_settings"
+msgstr "ChatGPT ayarlari"
+
+msgid "menu_chatgpt_model"
+msgstr "ChatGPT modeli"
+
+msgid "chatgpt_model_title"
+msgstr "ChatGPT modeli"
+
+msgid "chatgpt_model_hint"
+msgstr "Model adi"
+
+msgid "chatgpt_model_desc"
+msgstr "Resmi OpenAI model adi."
+
+msgid "chatgpt_model_saved"
+msgstr "ChatGPT modeli kaydedildi"
+
+msgid "menu_openai_compatible_settings"
+msgstr "OpenAI uyumlu ayarlar"
+
+msgid "menu_openai_compatible_key"
+msgstr "OpenAI uyumlu API anahtari"
+
+msgid "openai_compatible_key_title"
+msgstr "OpenAI uyumlu API anahtari"
+
+msgid "openai_compatible_key_hint"
+msgstr "sk-..."
+
+msgid "openai_compatible_key_desc"
+msgstr "Yapilandirilmis OpenAI uyumlu endpoint icin API anahtari."
+
+msgid "openai_compatible_key_saved"
+msgstr "OpenAI uyumlu API anahtari kaydedildi"
+
+msgid "menu_ai_qa_result"
+msgstr "Son AI yaniti"
+
+msgid "ai_qa_no_answer"
+msgstr "Henuz kullanilabilir bir AI yaniti yok."
+
+msgid "ai_qa_actions_title"
+msgstr "AI yaniti hazir"
+
+msgid "ai_qa_view_answer"
+msgstr "Yaniti gor"
+
+msgid "ai_qa_follow_up"
+msgstr "Takip sorusu"
+
+msgid "ai_qa_follow_up_hint"
+msgstr "Takip sorusu sorun"
+
+msgid "ai_qa_add_character"
+msgstr "Karakterlere ekle"
+
+msgid "ai_job_started"
+msgstr "AI gorevi basladi: %s / %s"
+
+msgid "ai_job_running"
+msgstr "AI gorevi zaten calisiyor."
+
+msgid "ai_job_start_failed"
+msgstr "AI gorevi baslatilamadi."
+
+msgid "ai_job_result_ready"
+msgstr "AI sonucu hazir."
+
+msgid "ai_job_cancel"
+msgstr "AI gorevini iptal et"
+
+msgid "ai_job_cancelled"
+msgstr "AI gorevi iptal edildi."
+
+msgid "ai_character_extract_failed"
+msgstr "Karakter JSON cikarilamadi."
+
+msgid "ai_character_confirm_title"
+msgstr "Karakter eklensin mi?"
+
+msgid "ai_character_conflict_with"
+msgstr "Mevcut karakterle olasi cakisma: %s"
+
+msgid "ai_character_merge_empty"
+msgstr "Bos alanlari birlestir"
+
+msgid "ai_character_overwrite_fields"
+msgstr "Secili alanlarin uzerine yaz"
+
+msgid "ai_character_add_new"
+msgstr "Yeni karakter olarak ekle"
+
+msgid "ai_character_saved"
+msgstr "Karakter kaydedildi"
+
+msgid "aliases"
+msgstr "Takma adlar"
+
+msgid "evidence"
+msgstr "Kanit"
+
+msgid "confidence"
+msgstr "Guven"
+
+msgid "close"
+msgstr "Kapat"

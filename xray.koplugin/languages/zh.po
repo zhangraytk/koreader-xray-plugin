@@ -1009,3 +1009,118 @@ msgstr "本地候选增强"
 
 msgid "analysis_mode_chunked"
 msgstr "分块正文增强"
+
+# ==============================
+# AI Q&A FOLLOW-UP AND CHARACTER MERGE
+# ==============================
+
+msgid "menu_gemini_settings"
+msgstr "Gemini 设置"
+
+msgid "menu_chatgpt_settings"
+msgstr "ChatGPT 设置"
+
+msgid "menu_chatgpt_model"
+msgstr "ChatGPT 模型"
+
+msgid "chatgpt_model_title"
+msgstr "ChatGPT 模型"
+
+msgid "chatgpt_model_hint"
+msgstr "模型名称"
+
+msgid "chatgpt_model_desc"
+msgstr "官方 OpenAI 模型名称。"
+
+msgid "chatgpt_model_saved"
+msgstr "ChatGPT 模型已保存"
+
+msgid "menu_openai_compatible_settings"
+msgstr "OpenAI 兼容设置"
+
+msgid "menu_openai_compatible_key"
+msgstr "OpenAI 兼容 API 密钥"
+
+msgid "openai_compatible_key_title"
+msgstr "OpenAI 兼容 API 密钥"
+
+msgid "openai_compatible_key_hint"
+msgstr "sk-..."
+
+msgid "openai_compatible_key_desc"
+msgstr "用于当前 OpenAI 兼容端点的 API 密钥。"
+
+msgid "openai_compatible_key_saved"
+msgstr "OpenAI 兼容 API 密钥已保存"
+
+msgid "menu_ai_qa_result"
+msgstr "上次 AI 回答"
+
+msgid "ai_qa_no_answer"
+msgstr "还没有可查看的 AI 回答。"
+
+msgid "ai_qa_actions_title"
+msgstr "AI 回答已准备好"
+
+msgid "ai_qa_view_answer"
+msgstr "查看回答"
+
+msgid "ai_qa_follow_up"
+msgstr "追问"
+
+msgid "ai_qa_follow_up_hint"
+msgstr "继续追问"
+
+msgid "ai_qa_add_character"
+msgstr "添加到角色"
+
+msgid "ai_job_started"
+msgstr "AI 任务已开始：%s / %s"
+
+msgid "ai_job_running"
+msgstr "AI 任务正在运行。"
+
+msgid "ai_job_start_failed"
+msgstr "无法启动 AI 任务。"
+
+msgid "ai_job_result_ready"
+msgstr "AI 结果已准备好。"
+
+msgid "ai_job_cancel"
+msgstr "取消 AI 任务"
+
+msgid "ai_job_cancelled"
+msgstr "AI 任务已取消。"
+
+msgid "ai_character_extract_failed"
+msgstr "无法提取角色 JSON。"
+
+msgid "ai_character_confirm_title"
+msgstr "添加角色？"
+
+msgid "ai_character_conflict_with"
+msgstr "可能与现有角色冲突：%s"
+
+msgid "ai_character_merge_empty"
+msgstr "合并空字段"
+
+msgid "ai_character_overwrite_fields"
+msgstr "覆盖选中字段"
+
+msgid "ai_character_add_new"
+msgstr "作为新角色添加"
+
+msgid "ai_character_saved"
+msgstr "角色已保存"
+
+msgid "aliases"
+msgstr "别名"
+
+msgid "evidence"
+msgstr "依据"
+
+msgid "confidence"
+msgstr "置信度"
+
+msgid "close"
+msgstr "关闭"
