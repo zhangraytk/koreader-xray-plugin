@@ -88,6 +88,15 @@ function AIHelper:trimText(text)
     return text:match("^%s*(.-)%s*$") or ""
 end
 
+function AIHelper:limitText(text, max_len)
+    text = self:trimText(text)
+    max_len = max_len or 4000
+    if #text > max_len then
+        return text:sub(1, max_len) .. "\n..."
+    end
+    return text
+end
+
 function AIHelper:ensureSettingsDir()
     local DataStorage = require("datastorage")
     local settings_dir = DataStorage:getSettingsDir()
