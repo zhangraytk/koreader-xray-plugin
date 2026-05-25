@@ -95,7 +95,7 @@ function XRayPlugin:onDispatcherRegisterActions()
         event = "ShowXRayLocations",
         title = self.loc:t("menu_locations") or "Locations",
         general = true,
-    }) 
+    })
 
     -- X-Ray AI Q&A action
     Dispatcher:registerAction("xray_ai_qa", {
@@ -427,6 +427,23 @@ function XRayPlugin:loadBackgroundJob()
     end
 end
 
+function XRayPlugin:shouldSkipAutoSeed(book_path, ui)
+    if type(book_path) == "string" and book_path:lower():match("%.pdf$") then
+        return true, "pdf"
+    end
+    local doc = ui and ui.document
+    if doc and type(doc.getProps) == "function" then
+        local ok, props = pcall(function() return doc:getProps() end)
+        if ok and type(props) == "table" then
+            local format = tostring(props.format or props.type or props.file_type or ""):lower()
+            if format == "pdf" or format:find("pdf", 1, true) then
+                return true, "pdf"
+            end
+        end
+    end
+    return false
+end
+
 function XRayPlugin:maybeStartInitialMetadataJob()
     if not self.ai_helper then
         local AIHelper = require("aihelper")
@@ -441,6 +458,11 @@ function XRayPlugin:maybeStartInitialMetadataJob()
 
     local book_path = self.ui and self.ui.document and self.ui.document.file
     if not book_path then return end
+    local skip, reason = self:shouldSkipAutoSeed(book_path, self.ui)
+    if skip then
+        logger.info("XRayPlugin: Initial metadata job skipped for", tostring(reason), "document:", book_path)
+        return
+    end
 
     local job_manager = self:getJobManager()
     local existing_job = job_manager:loadState(book_path)
@@ -456,14 +478,7 @@ function XRayPlugin:maybeStartInitialMetadataJob()
         return
     end
 
-    local props = self.ui.document:getProps() or {}
-    local title = props.title or "Unknown"
-    local author = props.authors or props.author or ""
-    if type(author) == "table" then
-        author = table.concat(author, ", ")
-    elseif type(author) ~= "string" then
-        author = tostring(author or "")
-    end
+    local title, author = self:getBookTitleAndAuthor()
 
     job_manager:start(self, {
         book_path = book_path,
@@ -472,11 +487,68 @@ function XRayPlugin:maybeStartInitialMetadataJob()
         provider_id = selected_provider,
         provider_name = provider_config.name or "AI",
         model = provider_config.model or "",
+        kind = "auto_metadata",
+        provider_type = provider_config.type,
         analysis_mode = "metadata",
         reading_percent = 100,
         initial_metadata = true,
         silent = settings.auto_metadata_silent ~= false,
     })
+end
+
+function XRayPlugin:clampText(text, max_len)
+    text = type(text) == "string" and text or tostring(text or "")
+    max_len = max_len or 120
+    text = text:gsub("%s+", " ")
+    if #text > max_len then
+        return text:sub(1, max_len) .. "..."
+    end
+    return text
+end
+
+function XRayPlugin:getSafeReadingPercent()
+    local _, total_pages, progress = self:getReadingProgress()
+    progress = tonumber(progress) or 100
+    if total_pages <= 0 or progress <= 0 then progress = 100 end
+    if progress < 1 then progress = 1 end
+    if progress > 100 then progress = 100 end
+    return progress
+end
+
+function XRayPlugin:getMenuPageBounds(total_count, page, page_size)
+    page_size = page_size or 80
+    total_count = tonumber(total_count) or 0
+    local total_pages = math.max(1, math.ceil(total_count / page_size))
+    page = tonumber(page) or 1
+    if page < 1 then page = 1 end
+    if page > total_pages then page = total_pages end
+    local start_index = ((page - 1) * page_size) + 1
+    local end_index = math.min(total_count, page * page_size)
+    return page, total_pages, start_index, end_index
+end
+
+function XRayPlugin:addPagingItems(items, total_count, page, total_pages, callback)
+    if total_pages <= 1 then return end
+    table.insert(items, { separator = true })
+    if page > 1 then
+        table.insert(items, {
+            text = "< " .. tostring(page - 1) .. "/" .. tostring(total_pages),
+            callback = function() callback(page - 1) end,
+        })
+    end
+    if page < total_pages then
+        table.insert(items, {
+            text = "> " .. tostring(page + 1) .. "/" .. tostring(total_pages),
+            callback = function() callback(page + 1) end,
+        })
+    end
+end
+
+function XRayPlugin:getPagedMenuTitle(title, total_count, page, total_pages)
+    if total_pages and total_pages > 1 then
+        return title .. " (" .. tostring(total_count) .. ") " .. tostring(page) .. "/" .. tostring(total_pages)
+    end
+    return title .. " (" .. tostring(total_count) .. ")"
 end
 
 function XRayPlugin:getMenuCounts()
@@ -704,6 +776,13 @@ function XRayPlugin:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = self.loc:t("menu_advanced_scan"),
+                keep_menu_open = true,
+                callback = function()
+                    self:showAdvancedAnalysisMenu()
+                end,
+            },
+            {
                 text = self.loc:t("menu_background_job"),
                 keep_menu_open = true,
                 callback = function()
@@ -871,11 +950,11 @@ function XRayPlugin:showLanguageSelection()
     if self.loc then
         current_lang = self.loc:getLanguage()
     end
-    
+
     local function changeLang(lang_code, lang_name)
         UIManager:close(self.ldlg)
-        
-        if self.loc then 
+
+        if self.loc then
             local save_success = self.loc:setLanguage(lang_code)
             
             if save_success then
@@ -929,7 +1008,7 @@ function XRayPlugin:showLanguageSelection()
     UIManager:show(self.ldlg)
 end
 
-function XRayPlugin:showCharacters()
+function XRayPlugin:showCharacters(page)
     if not self.characters or #self.characters == 0 then
         UIManager:show(InfoMessage:new{
             text = self.loc:t("no_character_data") or "No character data",
@@ -938,6 +1017,9 @@ function XRayPlugin:showCharacters()
         return
     end
     
+    local page_size = 60
+    page = page or 1
+    local current_page, total_pages, start_index, end_index = self:getMenuPageBounds(#self.characters, page, page_size)
     local items = {}
     
     -- Add search option
@@ -948,8 +1030,8 @@ function XRayPlugin:showCharacters()
         end
     })
     
-    -- Add characters
-    for i, char in ipairs(self.characters) do
+    for i = start_index, end_index do
+        local char = self.characters[i]
         -- CRITICAL: Ensure char and char.name exist
         if char and type(char) == "table" then
             local name = char.name
@@ -960,10 +1042,10 @@ function XRayPlugin:showCharacters()
             end
             
             local text = "│ " .. name
-            
+
             -- Add description if available
             if char.description and type(char.description) == "string" and #char.description > 0 then
-                text = text .. "\n   " .. char.description
+                text = text .. "\n   " .. self:clampText(char.description, 120)
             elseif char.gender or char.occupation then
                 local details = {}
                 if char.gender and type(char.gender) == "string" then 
@@ -993,9 +1075,11 @@ function XRayPlugin:showCharacters()
         end
     end
     
-    -- Ensure we have items to display
-    if #items <= 2 then
-        -- Only search and separator
+    self:addPagingItems(items, #self.characters, current_page, total_pages, function(next_page)
+        self:showCharacters(next_page)
+    end)
+
+    if #items <= 1 then
         UIManager:show(InfoMessage:new{
             text = self.loc:t("no_character_data") or "No valid character data",
             timeout = 3,
@@ -1004,7 +1088,7 @@ function XRayPlugin:showCharacters()
     end
     
     local character_menu = Menu:new{
-        title = (self.loc:t("menu_characters") or "Characters") .. " (" .. #self.characters .. ")",
+        title = self:getPagedMenuTitle(self.loc:t("menu_characters") or "Characters", #self.characters, current_page, total_pages),
         item_table = items,
         is_borderless = true,
         is_popout = false,
@@ -1196,18 +1280,7 @@ end
 function XRayPlugin:askSpoilerPreference()
     logger.info("XRayPlugin: Asking spoiler preference")
 
-    local current_page = 1
-    local total_pages = 1
-    if self.ui and self.ui.getCurrentPage then
-        current_page = tonumber(self.ui:getCurrentPage()) or 1
-    end
-    if self.ui and self.ui.document and self.ui.document.getPageCount then
-        total_pages = tonumber(self.ui.document:getPageCount()) or 1
-    end
-    if total_pages <= 0 then total_pages = 1 end
-    local reading_percent = math.floor((current_page / total_pages) * 100)
-    if reading_percent < 1 then reading_percent = 1 end
-    if reading_percent > 100 then reading_percent = 100 end
+    local reading_percent = self:getSafeReadingPercent()
 
     local spoiler_menu
     spoiler_menu = Menu:new{
@@ -1318,6 +1391,8 @@ function XRayPlugin:continueWithFetch(reading_percent, analysis_mode)
         provider_id = selected_provider,
         provider_name = provider_name,
         model = current_model,
+        kind = analysis_mode or "metadata",
+        provider_type = provider_config.type,
         analysis_mode = analysis_mode or "metadata",
         reading_percent = reading_percent,
         existing_data = existing_data or self.book_data,
@@ -1391,6 +1466,8 @@ function XRayPlugin:enrichFromNearbyContext()
         provider_id = selected_provider,
         provider_name = provider_config.name or "AI",
         model = provider_config.model or "",
+        kind = "nearby_context",
+        provider_type = provider_config.type,
         analysis_mode = "nearby_context",
         reading_percent = 100,
         existing_data = existing_data,
@@ -1405,6 +1482,80 @@ function XRayPlugin:enrichFromNearbyContext()
     end
 end
 
+function XRayPlugin:showAdvancedAnalysisMenu()
+    local reading_percent = self:getSafeReadingPercent()
+
+    local advanced_menu
+    advanced_menu = Menu:new{
+        title = self.loc:t("menu_advanced_scan"),
+        item_table = {
+            {
+                text = string.format(self.loc:t("analysis_mode_local_candidates"), reading_percent),
+                callback = function()
+                    UIManager:close(advanced_menu)
+                    self:continueWithFetch(reading_percent, "local_candidates")
+                end,
+            },
+            {
+                text = self.loc:t("analysis_mode_chunked"),
+                callback = function()
+                    UIManager:close(advanced_menu)
+                    self:continueWithFetch(reading_percent, "chunked_fulltext")
+                end,
+            },
+            {
+                text = self.loc:t("cancel"),
+                callback = function()
+                    UIManager:close(advanced_menu)
+                end,
+            },
+        },
+        is_borderless = true,
+        is_popout = false,
+        title_bar_fm_style = true,
+        width = Screen:getWidth(),
+        height = Screen:getHeight(),
+    }
+    UIManager:show(advanced_menu)
+end
+
+function XRayPlugin:restartBackgroundJob(mode_override)
+    local job_manager = self:getJobManager()
+    local book_path = self.ui and self.ui.document and self.ui.document.file
+    if not book_path then return false, "no_book" end
+    local state = job_manager:loadState(book_path)
+    if not state then return false, "no_job" end
+    if job_manager:isRunning() then return false, "job_running" end
+    if not self.ai_helper then
+        local AIHelper = require("aihelper")
+        self.ai_helper = AIHelper
+        self.ai_helper:init()
+    end
+    local provider_id = state.provider_id or self.ai_helper.default_provider or "gemini"
+    local provider_config = self.ai_helper.providers[provider_id]
+    if not provider_config or not provider_config.api_key or #provider_config.api_key == 0 then
+        return false, "no_api_key"
+    end
+    local fallback_title, fallback_author = self:getBookTitleAndAuthor()
+    local title = (type(state.title) == "string" and #state.title > 0) and state.title or fallback_title
+    local author = (type(state.author) == "string" and #state.author > 0) and state.author or fallback_author
+    return job_manager:start(self, {
+        book_path = book_path,
+        title = title,
+        author = author,
+        provider_id = provider_id,
+        provider_name = state.provider_name or provider_config.name or "AI",
+        model = state.model or provider_config.model or "",
+        kind = mode_override or state.kind or state.analysis_mode,
+        provider_type = provider_config.type,
+        analysis_mode = mode_override or state.analysis_mode or "metadata",
+        reading_percent = state.reading_percent or 100,
+        existing_data = state.existing_data or self.book_data,
+        context_char_limit = state.context_char_limit,
+        silent = false,
+    })
+end
+
 function XRayPlugin:showBackgroundJobStatus()
     local ButtonDialog = require("ui/widget/buttondialog")
     local TextViewer = require("ui/widget/textviewer")
@@ -1414,70 +1565,84 @@ function XRayPlugin:showBackgroundJobStatus()
         job_manager:loadState(book_path)
     end
 
-    local buttons = {
-        {
-            {
-                text = self.loc:t("background_job_resume"),
-                callback = function()
-                    UIManager:close(self.job_status_dialog)
-                    if not book_path or not job_manager:loadState(book_path) then
-                        UIManager:show(InfoMessage:new{text = self.loc:t("background_job_none"), timeout = 3})
-                        return
-                    end
-                    local ok, err = job_manager:resume(self)
-                    UIManager:show(InfoMessage:new{
-                        text = ok and self.loc:t("background_job_started") or (self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or "")),
-                        timeout = 4,
-                    })
-                end,
-            },
-        },
-        {
-            {
-                text = self.loc:t("background_job_view_prompt"),
-                callback = function()
-                    local prompt, label = job_manager:getPromptPreview()
-                    if not prompt then
-                        prompt, label = job_manager:preparePromptPreview(self)
-                    end
-                    if not prompt then
-                        UIManager:show(InfoMessage:new{text = self.loc:t("background_job_prompt_not_ready"), timeout = 3})
-                        return
-                    end
-                    UIManager:show(TextViewer:new{
-                        title = label or self.loc:t("background_job_view_prompt"),
-                        text = prompt,
-                        justified = false,
-                    })
-                end,
-            },
-        },
-        {
-            {
-                text = self.loc:t("text_extraction_diagnostics"),
-                callback = function()
-                    local TextAnalyzer = require("textanalyzer")
-                    local analyzer = TextAnalyzer:new()
-                    UIManager:show(TextViewer:new{
-                        title = self.loc:t("text_extraction_diagnostics"),
-                        text = analyzer:diagnose(self.ui),
-                        justified = false,
-                    })
-                end,
-            },
-        },
-        {
-            {
-                text = self.loc:t("background_job_cancel"),
-                callback = function()
-                    job_manager:cancel()
-                    if book_path then job_manager:saveState(book_path) end
-                    UIManager:close(self.job_status_dialog)
-                    UIManager:show(InfoMessage:new{text = self.loc:t("background_job_cancel_requested"), timeout = 3})
-                end,
-            },
-        },
-    }
+    local buttons = {}
+    local state = job_manager.state or {}
+    local status = state.status or "idle"
+    local has_job = book_path and state.book_path ~= nil
+    local active = job_manager:isRunning()
+    local resumable = has_job and job_manager:isStateResumable()
+
+    local function addButton(text, callback)
+        table.insert(buttons, {{ text = text, callback = callback }})
+    end
+
+    if resumable and not active then
+        addButton(self.loc:t("background_job_retry"), function()
+            UIManager:close(self.job_status_dialog)
+            local ok, err = self:restartBackgroundJob()
+            UIManager:show(InfoMessage:new{
+                text = ok and self.loc:t("background_job_started") or (self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or "")),
+                timeout = 4,
+            })
+        end)
+        addButton(self.loc:t("background_job_fallback_metadata"), function()
+            UIManager:close(self.job_status_dialog)
+            local ok, err = self:restartBackgroundJob("metadata")
+            UIManager:show(InfoMessage:new{
+                text = ok and self.loc:t("background_job_started") or (self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or "")),
+                timeout = 4,
+            })
+        end)
+    end
+
+    if resumable and not active and status ~= "failed" then
+        addButton(self.loc:t("background_job_resume"), function()
+            UIManager:close(self.job_status_dialog)
+            if not book_path or not job_manager:loadState(book_path) then
+                UIManager:show(InfoMessage:new{text = self.loc:t("background_job_none"), timeout = 3})
+                return
+            end
+            local ok, err = job_manager:resume(self)
+            UIManager:show(InfoMessage:new{
+                text = ok and self.loc:t("background_job_started") or (self.loc:t("background_job_failed") .. "\n\n" .. tostring(err or "")),
+                timeout = 4,
+            })
+        end)
+    end
+
+    if state.last_prompt_preview and #state.last_prompt_preview > 0 then
+        addButton(self.loc:t("background_job_view_prompt"), function()
+            local prompt, label = job_manager:getPromptPreview()
+            if not prompt then
+                UIManager:show(InfoMessage:new{text = self.loc:t("background_job_prompt_not_ready"), timeout = 3})
+                return
+            end
+            UIManager:show(TextViewer:new{
+                title = label or self.loc:t("background_job_view_prompt"),
+                text = prompt,
+                justified = false,
+            })
+        end)
+    end
+
+    addButton(self.loc:t("text_extraction_diagnostics"), function()
+        local TextAnalyzer = require("textanalyzer")
+        local analyzer = TextAnalyzer:new()
+        UIManager:show(TextViewer:new{
+            title = self.loc:t("text_extraction_diagnostics"),
+            text = analyzer:diagnose(self.ui),
+            justified = false,
+        })
+    end)
+
+    if active then
+        addButton(self.loc:t("background_job_cancel"), function()
+            job_manager:cancel()
+            if book_path then job_manager:saveState(book_path) end
+            UIManager:close(self.job_status_dialog)
+            UIManager:show(InfoMessage:new{text = self.loc:t("background_job_cancel_requested"), timeout = 3})
+        end)
+    end
 
     self.job_status_dialog = ButtonDialog:new{
         title = self.loc:t("menu_background_job") .. "\n\n" .. job_manager:getStatusText(),
@@ -1486,7 +1651,7 @@ function XRayPlugin:showBackgroundJobStatus()
     UIManager:show(self.job_status_dialog)
 end
 
-function XRayPlugin:showLocations()
+function XRayPlugin:showLocations(page)
     if not self.locations or #self.locations == 0 then
         UIManager:show(InfoMessage:new{
             text = self.loc:t("no_location_data"),
@@ -1494,16 +1659,20 @@ function XRayPlugin:showLocations()
         })
         return
     end
-    
+
+    local page_size = 60
+    page = page or 1
+    local current_page, total_pages, start_index, end_index = self:getMenuPageBounds(#self.locations, page, page_size)
     local items = {}
-    for i, loc in ipairs(self.locations) do
+    for i = start_index, end_index do
+        local loc = self.locations[i]
         local text = loc.name or "Unknown Location"
-        
+
         if loc.description then
-            text = text .. "\n   " .. loc.description
+            text = text .. "\n   " .. self:clampText(loc.description, 120)
         end
         if loc.importance then
-            text = text .. "\n   🎯 " .. loc.importance
+            text = text .. "\n   🎯 " .. self:clampText(loc.importance, 90)
         end
         
         table.insert(items, {
@@ -1523,9 +1692,13 @@ function XRayPlugin:showLocations()
             end,
         })
     end
-    
+
+    self:addPagingItems(items, #self.locations, current_page, total_pages, function(next_page)
+        self:showLocations(next_page)
+    end)
+
     local location_menu = Menu:new{
-        title = self.loc:t("menu_locations") .. " (" .. #self.locations .. ")",
+        title = self:getPagedMenuTitle(self.loc:t("menu_locations"), #self.locations, current_page, total_pages),
         item_table = items,
         is_borderless = true,
         is_popout = false,
@@ -3011,7 +3184,7 @@ function XRayPlugin:showThemes()
     })
 end
 
-function XRayPlugin:showTimeline()
+function XRayPlugin:showTimeline(page)
     if not self.timeline or #self.timeline == 0 then
         UIManager:show(InfoMessage:new{
             text = self.loc:t("no_timeline_data"),
@@ -3019,21 +3192,25 @@ function XRayPlugin:showTimeline()
         })
         return
     end
-    
+
+    local page_size = 50
+    page = page or 1
+    local current_page, total_pages, start_index, end_index = self:getMenuPageBounds(#self.timeline, page, page_size)
     local items = {}
-    for i, event in ipairs(self.timeline) do
+    for i = start_index, end_index do
+        local event = self.timeline[i]
         local text = ""
-        
+
         if event.chapter then
-            text = text .. "📖 " .. event.chapter .. "\n"
+            text = text .. "📖 " .. self:clampText(event.chapter, 70) .. "\n"
         end
-        
+
         if event.event then
-            text = text .. event.event
+            text = text .. self:clampText(event.event, 140)
         end
-        
+
         if event.characters and #event.characters > 0 then
-            text = text .. "\n👥 " .. table.concat(event.characters, ", ")
+            text = text .. "\n👥 " .. self:clampText(table.concat(event.characters, ", "), 100)
         end
         
         table.insert(items, {
@@ -3067,9 +3244,13 @@ function XRayPlugin:showTimeline()
             end,
         })
     end
-    
+
+    self:addPagingItems(items, #self.timeline, current_page, total_pages, function(next_page)
+        self:showTimeline(next_page)
+    end)
+
     local timeline_menu = Menu:new{
-        title = self.loc:t("menu_timeline") .. " (" .. #self.timeline .. " " .. self.loc:t("events") .. ")",
+        title = self:getPagedMenuTitle(self.loc:t("menu_timeline") .. " " .. self.loc:t("events"), #self.timeline, current_page, total_pages),
         item_table = items,
         is_borderless = true,
         is_popout = false,
@@ -3081,7 +3262,7 @@ function XRayPlugin:showTimeline()
     UIManager:show(timeline_menu)
 end
 
-function XRayPlugin:showHistoricalFigures()
+function XRayPlugin:showHistoricalFigures(page)
     if not self.historical_figures or #self.historical_figures == 0 then
         UIManager:show(InfoMessage:new{
             text = self.loc:t("no_historical_data"),
@@ -3089,9 +3270,13 @@ function XRayPlugin:showHistoricalFigures()
         })
         return
     end
-    
+
+    local page_size = 50
+    page = page or 1
+    local current_page, total_pages, start_index, end_index = self:getMenuPageBounds(#self.historical_figures, page, page_size)
     local items = {}
-    for i, figure in ipairs(self.historical_figures) do
+    for i = start_index, end_index do
+        local figure = self.historical_figures[i]
         local text = ""
         
         if figure.name then
@@ -3111,7 +3296,7 @@ function XRayPlugin:showHistoricalFigures()
         end
         
         if figure.role then
-            text = text .. "\n   " .. figure.role
+            text = text .. "\n   " .. self:clampText(figure.role, 100)
         end
         
         table.insert(items, {
@@ -3121,9 +3306,13 @@ function XRayPlugin:showHistoricalFigures()
             end,
         })
     end
-    
+
+    self:addPagingItems(items, #self.historical_figures, current_page, total_pages, function(next_page)
+        self:showHistoricalFigures(next_page)
+    end)
+
     local figures_menu = Menu:new{
-        title = self.loc:t("menu_historical_figures") .. " (" .. #self.historical_figures .. ")",
+        title = self:getPagedMenuTitle(self.loc:t("menu_historical_figures"), #self.historical_figures, current_page, total_pages),
         item_table = items,
         is_borderless = true,
         is_popout = false,
@@ -3174,37 +3363,53 @@ function XRayPlugin:showHistoricalFigureDetails(figure)
     })
 end
 
-function XRayPlugin:showChapterCharacters()
+function XRayPlugin:showChapterCharacters(page, cached_result)
     if not self.characters or #self.characters == 0 then
         UIManager:show(InfoMessage:new{
-            text = self.loc:t("no_char_data_fetch"), 
+            text = self.loc:t("no_char_data_fetch"),
             timeout = 3,
         })
         return
     end
-    
-    if not self.chapter_analyzer then
-        local ChapterAnalyzer = require("chapteranalyzer")
-        self.chapter_analyzer = ChapterAnalyzer:new()
-    end
-    
-    UIManager:show(InfoMessage:new{
-        text = self.loc:t("analyzing_chapter"),
-        timeout = 1,
-    })
-    
-    local chapter_text, chapter_title = self.chapter_analyzer:getCurrentChapterText(self.ui)
-    
-    if not chapter_text or #chapter_text == 0 then
+
+    local found_chars
+    local chapter_title
+    if cached_result then
+        found_chars = cached_result.found_chars or {}
+        chapter_title = cached_result.chapter_title
+    else
+        if not self.chapter_analyzer then
+            local ChapterAnalyzer = require("chapteranalyzer")
+            self.chapter_analyzer = ChapterAnalyzer:new()
+        end
+
         UIManager:show(InfoMessage:new{
-            text = self.loc:t("chapter_text_error"),
-            timeout = 3,
+            text = self.loc:t("analyzing_chapter"),
+            timeout = 1,
         })
-        return
+
+        local chapter_text
+        local ok, text_result, title_result = pcall(function()
+            return self.chapter_analyzer:getCurrentChapterText(self.ui)
+        end)
+        if ok then
+            chapter_text = text_result
+            chapter_title = title_result
+        else
+            logger.warn("XRayPlugin: chapter text extraction failed:", tostring(text_result))
+        end
+
+        if not chapter_text or #chapter_text == 0 then
+            UIManager:show(InfoMessage:new{
+                text = self.loc:t("chapter_text_error"),
+                timeout = 3,
+            })
+            return
+        end
+
+        found_chars = self.chapter_analyzer:findCharactersInText(chapter_text, self.characters)
     end
-    
-    local found_chars = self.chapter_analyzer:findCharactersInText(chapter_text, self.characters)
-    
+
     if #found_chars == 0 then
         UIManager:show(InfoMessage:new{
             text = string.format(self.loc:t("no_characters_in_chapter"), chapter_title or self.loc:t("this_chapter")),
@@ -3212,9 +3417,17 @@ function XRayPlugin:showChapterCharacters()
         })
         return
     end
-    
+
+    local page_size = 60
+    page = page or 1
+    local current_page, total_pages, start_index, end_index = self:getMenuPageBounds(#found_chars, page, page_size)
+    local result_cache = {
+        found_chars = found_chars,
+        chapter_title = chapter_title,
+    }
     local items = {}
-    for _, char_info in ipairs(found_chars) do
+    for i = start_index, end_index do
+        local char_info = found_chars[i]
         local char = char_info.character
         local count = char_info.count
         
@@ -3234,12 +3447,17 @@ function XRayPlugin:showChapterCharacters()
             end,
         })
     end
-    
+
+    self:addPagingItems(items, #found_chars, current_page, total_pages, function(next_page)
+        self:showChapterCharacters(next_page, result_cache)
+    end)
+
     local menu = Menu:new{
-        title = string.format("📖 %s\n👥 %d %s", 
-                             chapter_title or self.loc:t("this_chapter"), 
+        title = string.format("📖 %s\n👥 %d %s%s",
+                             chapter_title or self.loc:t("this_chapter"),
                              #found_chars,
-                             self.loc:t("chapter_chars_title")), 
+                             self.loc:t("chapter_chars_title"),
+                             total_pages > 1 and (" " .. current_page .. "/" .. total_pages) or ""),
         item_table = items,
         is_borderless = true,
         is_popout = false,
@@ -3507,6 +3725,15 @@ function XRayPlugin:showQuickXRayMenu()
                 callback = function()
                     UIManager:close(self.quick_dialog)
                     self:enrichFromNearbyContext()
+                end,
+            },
+        },
+        {
+            {
+                text = self.loc:t("menu_advanced_scan"),
+                callback = function()
+                    UIManager:close(self.quick_dialog)
+                    self:showAdvancedAnalysisMenu()
                 end,
             },
         },

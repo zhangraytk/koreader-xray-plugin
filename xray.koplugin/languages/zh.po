@@ -859,6 +859,9 @@ msgstr "结合本书上下文解释选中的文字。"
 msgid "menu_enrich_nearby_context"
 msgstr "用当前位置上下文补充角色"
 
+msgid "menu_advanced_scan"
+msgstr "高级文本扫描"
+
 msgid "menu_background_job"
 msgstr "后台 AI 任务"
 
@@ -870,6 +873,12 @@ msgstr "AI 分析完成，X-Ray 数据已准备好。"
 
 msgid "background_job_failed"
 msgstr "AI 分析失败。"
+
+msgid "background_job_retry"
+msgstr "重试上次任务"
+
+msgid "background_job_fallback_metadata"
+msgstr "以轻量种子重试"
 
 msgid "background_job_cancel"
 msgstr "取消当前任务"

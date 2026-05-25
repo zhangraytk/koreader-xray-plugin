@@ -825,6 +825,9 @@ msgstr "OpenAI uyumlu endpoint kaydedildi"
 msgid "menu_enrich_nearby_context"
 msgstr "Yakındaki bağlamla karakterleri geliştir"
 
+msgid "menu_advanced_scan"
+msgstr "Gelişmiş metin taraması"
+
 msgid "menu_background_job"
 msgstr "Arka plan AI görevi"
 
@@ -836,6 +839,12 @@ msgstr "AI analizi tamamlandı. X-Ray verisi hazır."
 
 msgid "background_job_failed"
 msgstr "AI analizi başarısız oldu."
+
+msgid "background_job_retry"
+msgstr "Son görevi yeniden dene"
+
+msgid "background_job_fallback_metadata"
+msgstr "Hafif tohum olarak yeniden dene"
 
 msgid "background_job_cancel"
 msgstr "Geçerli görevi iptal et"

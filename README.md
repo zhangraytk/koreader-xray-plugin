@@ -108,9 +108,28 @@ cp -r xray.koplugin ~/.config/koreader/plugins/
 ### 4. Fetch Your First Book
 
 1. Go to **Menu → X-Ray → Fetch AI Data** (veya "AI ile Bilgi Çek")
-2. The analysis starts as a background job
+2. The default analysis is a light metadata seed based on title and author
 3. Continue reading or open **Menu → X-Ray → Background AI job** to view status, prompt preview, diagnostics, resume, or cancel
 4. Done! All data is now cached offline ✨
+
+---
+
+## 🧭 Default AI Workflow
+
+X-Ray uses a low-cost, device-friendly workflow by default:
+
+1. **Light metadata seed**: `Fetch AI Data` first asks AI for a compact X-Ray seed using the book title and author. This avoids scanning the whole book on slow devices.
+2. **Nearby-context enrichment**: after reading further, use **Enrich characters from nearby context** to merge details from the current position into the cache.
+3. **AI Q&A and character merge**: ask focused questions from the menu or selected text, then add useful extracted characters to the cache.
+4. **Advanced local scanning**: local candidates and chunked full-text analysis remain available as manual fallback tools for books where metadata and nearby context are not enough.
+
+Automatic X-Ray seed generation follows the same light metadata path. It does not start local candidate scans or chunked full-text scans when a book opens.
+
+### PDF Behavior
+
+- Automatic seed generation is skipped for PDF files, even when `auto_metadata_on_open` is enabled.
+- Manual actions still work on PDF: light seed, AI Q&A, nearby-context enrichment, and advanced scans remain available from the menu.
+- Advanced PDF scanning is capped by page and character limits to avoid long blocking extraction on low-performance readers.
 
 ---
 
@@ -188,7 +207,8 @@ Menu → X-Ray → Background AI job
 - Shows current stage, provider, model, text source, and progress
 - Lets you preview the prompt generated for the AI request
 - Provides text extraction diagnostics
-- Supports cancellation and resume for resumable job state
+- Supports cancellation, retry, light-seed fallback, and resume for resumable job state
+- Shows provider diagnostics such as HTTP status, error detail, request/response size, and OpenAI-compatible retry notes when available
 
 ### Advanced Features
 
@@ -220,6 +240,15 @@ Menu → X-Ray → AI Settings
 - Add, edit, delete, and select custom providers
 - Configure automatic X-Ray seed generation when a book opens
 - Configure the nearby-context character limit
+
+#### 🔬 Advanced Scans
+```
+Menu → X-Ray → Fetch AI Data → Advanced analysis options
+```
+- Local candidate and chunked full-text analysis are advanced fallback paths
+- Text extraction diagnostics use a light sample instead of scanning the whole book
+- PDF and page-based documents use stricter scan caps
+- Large result lists use short previews and pagination/search-first navigation
 
 ---
 
@@ -354,12 +383,12 @@ Examples:
   - Raskolnikov (protagonist, student)
   - Sonya (poor girl, religious)
   - Porfiry (investigator)
-  
+
 ✓ Timeline (8 events)
   - Chapter 1: Raskolnikov plans the crime
   - Chapter 2: The murder takes place
   - Chapter 5: First interrogation
-  
+
 ✓ Historical Context
   - 1860s Russian nihilism movement
   - St. Petersburg urban poverty
@@ -373,10 +402,10 @@ Examples:
   - Napoleon Bonaparte (1769-1821)
   - Mikhail Kutuzov (1745-1813)
   - Alexander I of Russia
-  
+
 ✓ Locations (15+)
   - Moscow, Petersburg, Austerlitz
-  
+
 ✓ Timeline
   - Battle of Austerlitz (1805)
   - French invasion of Russia (1812)
@@ -390,12 +419,12 @@ Examples:
   - Jay Gatsby (mysterious millionaire)
   - Nick Carraway (narrator)
   - Daisy Buchanan
-  
+
 ✓ Themes
   - American Dream
   - Wealth and class
   - Love and obsession
-  
+
 ✓ Locations
   - West Egg, East Egg, New York City
 ```
@@ -474,6 +503,30 @@ characternotes.lua → Personal notes management
 }
 ```
 
+Optional v7 fields may include `seed_mode`, `enrichment_history`, `last_provider_id`, `last_model`, `source_stats`, and `last_error`. Older cache files remain compatible.
+
+### Background Job State
+
+Background jobs store resumable state in `xray_job_state.lua` next to the book. Newer state can include `kind`, `retry_count`, `last_error_code`, `last_error_detail`, `request_size`, `response_size`, `status_code`, `provider_type`, and compatibility retry notes. A stale `running` state left behind by a crash is treated as recoverable instead of blocking retry forever.
+
+### Performance Safeguards
+
+- Opening a book and building menus avoids heavy text scans.
+- Text extraction diagnostics sample only the current area and a few pages.
+- Nearby-context enrichment uses a configurable compact context window.
+- PDF and page-based advanced scans use page and character caps.
+- Chapter character analysis limits extracted text and scanned character count.
+- Large character, location, timeline, and historical-figure lists show short previews with paging/search before full detail.
+
+### Local Smoke Tests
+
+```bash
+lua tests/smoke_ai_stability.lua
+luajit tests/smoke_ai_stability.lua
+luac -p xray.koplugin/*.lua xray.koplugin/prompts/*.lua
+git diff --check
+```
+
 ---
 
 ## ❓ FAQ
@@ -534,9 +587,13 @@ A: Yes! See Contributing section below.
 
 ### Background job failed
 - Open **Menu → X-Ray → Background AI job**
-- Review status, prompt preview, and text extraction diagnostics
-- Resume the job if it stopped before completion
+- Review status, prompt preview, HTTP/error details, compatibility retry notes, and text extraction diagnostics
+- Retry failed/interrupted jobs, resume resumable jobs, or retry as light metadata seed
 - Cancel and retry with light metadata mode if local text extraction is unavailable for the document
+
+### PDF opened with automatic seed enabled
+- This is expected to do nothing automatically. PDF auto-seed is intentionally skipped to avoid expensive extraction on open.
+- Use **Fetch AI Data** manually for a light seed, or use AI Q&A / advanced scans when needed.
 
 ### "No characters found in chapter"
 - Make sure you're in a chapter (not title page)

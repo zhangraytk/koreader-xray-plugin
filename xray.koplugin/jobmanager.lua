@@ -11,6 +11,7 @@ function JobManager:new(o)
     setmetatable(o, self)
     self.__index = self
     o.state = o.state or { status = "idle" }
+    o.active = false
     return o
 end
 
@@ -80,6 +81,9 @@ function JobManager:loadState(book_path)
     f:close()
     local ok, data = pcall(dofile, path)
     if ok and type(data) == "table" then
+        data.analysis_mode = data.analysis_mode or "metadata"
+        data.kind = data.kind or data.analysis_mode
+        data.retry_count = tonumber(data.retry_count) or 0
         self.state = data
         return data
     end
@@ -92,8 +96,15 @@ function JobManager:clearState(book_path)
 end
 
 function JobManager:isRunning()
+    if not self.active then return false end
     local status = self.state and self.state.status
     return status == "scanning" or status == "calling_ai" or status == "merging" or status == "saving"
+end
+
+function JobManager:isStateResumable()
+    local status = self.state and self.state.status
+    return status == "queued" or status == "scanning" or status == "calling_ai" or status == "merging" or status == "saving"
+        or status == "failed"
 end
 
 function JobManager:cancel()
@@ -121,11 +132,69 @@ function JobManager:getStatusText()
     if s.total_chunks and s.total_chunks > 0 then
         table.insert(lines, "Progress: " .. tostring(s.current_chunk or 0) .. "/" .. tostring(s.total_chunks))
     end
+    if s.request_size then table.insert(lines, "Request bytes: " .. tostring(s.request_size)) end
+    if s.response_size then table.insert(lines, "Response bytes: " .. tostring(s.response_size)) end
+    if s.status_code then table.insert(lines, "HTTP status: " .. tostring(s.status_code)) end
+    if s.last_error_code then table.insert(lines, "Error code: " .. tostring(s.last_error_code)) end
+    if s.compatibility_retry then
+        table.insert(lines, "Compatibility retry: stripped unsupported OpenAI parameters")
+        if s.stripped_params and #s.stripped_params > 0 then
+            table.insert(lines, "Stripped params: " .. table.concat(s.stripped_params, ", "))
+        end
+        if s.first_status_code then
+            table.insert(lines, "First HTTP status: " .. tostring(s.first_status_code))
+        end
+        if s.first_error_code then
+            table.insert(lines, "First error: " .. tostring(s.first_error_code))
+        end
+    end
+    if s.last_error_detail and s.last_error_detail ~= s.last_error then
+        table.insert(lines, "Error detail: " .. tostring(s.last_error_detail))
+    end
     if s.last_error then table.insert(lines, "Error: " .. tostring(s.last_error)) end
     return table.concat(lines, "\n")
 end
 
+function JobManager:captureRequestStats(plugin, error_code, error_detail)
+    local stats = plugin and plugin.ai_helper and plugin.ai_helper.last_request_stats
+    if type(stats) == "table" then
+        self.state.provider_type = stats.provider_type or self.state.provider_type
+        self.state.request_size = stats.request_size
+        self.state.response_size = stats.response_size
+        self.state.status_code = stats.status_code
+        self.state.retry_count = stats.retry_count or self.state.retry_count or 0
+        self.state.compatibility_retry = stats.compatibility_retry
+        self.state.stripped_params = stats.stripped_params
+        self.state.first_error_code = stats.first_error_code
+        self.state.first_status_code = stats.first_status_code
+    end
+    if error_code then
+        self.state.last_error_code = error_code
+    end
+    if error_detail then
+        self.state.last_error_detail = error_detail
+    end
+end
+
+function JobManager:clearRequestDiagnostics(clear_errors)
+    if not self.state then return end
+    self.state.request_size = nil
+    self.state.response_size = nil
+    self.state.status_code = nil
+    self.state.compatibility_retry = nil
+    self.state.stripped_params = nil
+    self.state.first_error_code = nil
+    self.state.first_status_code = nil
+    if clear_errors then
+        self.state.last_error = nil
+        self.state.last_error_code = nil
+        self.state.last_error_detail = nil
+    end
+end
+
 function JobManager:finish(plugin, book_data)
+    self:captureRequestStats(plugin)
+    self.active = false
     self.state.status = "saving"
     self.state.stage = "saving"
     self.state.job_completed_at = os.time()
@@ -136,6 +205,9 @@ function JobManager:finish(plugin, book_data)
     book_data.provider_name = self.state.provider_name
     book_data.model = self.state.model
     book_data.source_stats = self.state.source_stats or {}
+    book_data.seed_mode = self.state.initial_metadata and "auto_metadata" or self.state.analysis_mode
+    book_data.last_provider_id = self.state.provider_id
+    book_data.last_model = self.state.model
     book_data.job_completed_at = self.state.job_completed_at
 
     if not plugin.cache_manager then
@@ -162,6 +234,8 @@ function JobManager:finish(plugin, book_data)
 end
 
 function JobManager:fail(plugin, message)
+    self:captureRequestStats(plugin, self.state.last_error_code, message)
+    self.active = false
     self.state.status = self.state.cancel_requested and "cancelled" or "failed"
     self.state.stage = self.state.status
     self.state.last_error = message
@@ -231,7 +305,11 @@ function JobManager:callFinalAI(plugin)
 
     self.state.status = "calling_ai"
     self.state.stage = "final_ai"
+    self:clearRequestDiagnostics(true)
     self:saveState(self.state.book_path)
+    if plugin.ai_helper then
+        plugin.ai_helper.last_request_stats = nil
+    end
 
     local context = self:buildBaseContext()
     self:setPromptPreview(plugin, context, "Final X-Ray prompt")
@@ -243,6 +321,7 @@ function JobManager:callFinalAI(plugin)
     )
 
     if not data then
+        self:captureRequestStats(plugin, err, detail)
         self:fail(plugin, detail or err or "ai_failed")
         return
     end
@@ -265,6 +344,7 @@ function JobManager:processNearbyContext(plugin)
     UIManager:scheduleIn(0.05, function()
         self.state.status = "scanning"
         self.state.stage = "nearby_context"
+        self:clearRequestDiagnostics(true)
         local text, stats = analyzer:getNearbyContext(plugin.ui, self.state.context_char_limit or 500)
         self.state.nearby_text = text
         self.state.nearby_context_stats = stats
@@ -286,11 +366,12 @@ function JobManager:processLocalCandidates(plugin)
 
     self.state.status = "scanning"
     self.state.stage = "building_chunks"
+    self:clearRequestDiagnostics(true)
     local chunks, stats = analyzer:buildChunks(plugin.ui, self.state.reading_percent)
     self.state.source_stats = stats or {}
     self.state.total_chunks = #chunks
     self.state.current_chunk = 0
-    self.state.candidate_map = self.state.candidate_map or {}
+    self.state.candidate_map = {}
     self:saveState(self.state.book_path)
 
     if #chunks == 0 then
@@ -331,6 +412,7 @@ function JobManager:processChunkedFullText(plugin)
 
     self.state.status = "scanning"
     self.state.stage = "building_chunks"
+    self:clearRequestDiagnostics(true)
     local chunks, stats = analyzer:buildChunks(plugin.ui, self.state.reading_percent)
     self.state.source_stats = stats or {}
     self.state.total_chunks = #chunks
@@ -375,6 +457,9 @@ function JobManager:processChunkedFullText(plugin)
         self.state.stage = "chunk_ai"
         analyzer:extractCandidatesFromText(chunk.text or "", self.state.candidate_map)
         self:saveState(self.state.book_path)
+        if plugin.ai_helper then
+            plugin.ai_helper.last_request_stats = nil
+        end
 
         local context = {
             reading_percent = tonumber(self.state.reading_percent) or 100,
@@ -387,6 +472,7 @@ function JobManager:processChunkedFullText(plugin)
         self:setPromptPreview(plugin, context, "Chunk prompt " .. tostring(self.state.current_chunk) .. "/" .. tostring(self.state.total_chunks))
         local data, err, detail = plugin.ai_helper:getBookData(self.state.title, self.state.author, self.state.provider_id, context)
         if not data then
+            self:captureRequestStats(plugin, err, detail)
             self:fail(plugin, detail or err or "chunk_ai_failed")
             return
         end
@@ -408,6 +494,10 @@ function JobManager:start(plugin, params)
         return false, "job_running"
     end
 
+    if plugin.ai_helper then
+        plugin.ai_helper.last_request_stats = nil
+    end
+    self.active = true
     self.state = {
         status = "queued",
         stage = "queued",
@@ -418,12 +508,15 @@ function JobManager:start(plugin, params)
         provider_id = params.provider_id,
         provider_name = params.provider_name,
         model = params.model,
-        analysis_mode = params.analysis_mode or "local_candidates",
+        kind = params.kind or params.analysis_mode or "metadata",
+        provider_type = params.provider_type,
+        analysis_mode = params.analysis_mode or "metadata",
         reading_percent = params.reading_percent or 100,
         existing_data = params.existing_data,
         initial_metadata = params.initial_metadata == true,
         silent = params.silent == true,
         context_char_limit = params.context_char_limit,
+        retry_count = 0,
         cancel_requested = false,
     }
     self:saveState(params.book_path)
@@ -464,7 +557,14 @@ function JobManager:resume(plugin)
         local CacheManager = require("cachemanager")
         plugin.cache_manager = CacheManager:new()
     end
+    if plugin.ai_helper then
+        plugin.ai_helper.last_request_stats = nil
+    end
+    self.active = true
     self.state.cancel_requested = false
+    self.state.analysis_mode = self.state.analysis_mode or "metadata"
+    self.state.kind = self.state.kind or self.state.analysis_mode
+    self:clearRequestDiagnostics(true)
     if self.state.analysis_mode == "metadata" then
         self:processMetadata(plugin)
     elseif self.state.analysis_mode == "nearby_context" then

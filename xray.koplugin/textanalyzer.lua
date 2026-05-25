@@ -5,6 +5,12 @@ local TextAnalyzer = {}
 
 TextAnalyzer.max_chunk_chars = 14000
 TextAnalyzer.max_candidate_contexts = 2
+TextAnalyzer.max_scan_pages = 120
+TextAnalyzer.max_pdf_scan_pages = 40
+TextAnalyzer.max_scan_chars = 240000
+TextAnalyzer.max_cjk_scan_chars = 60000
+TextAnalyzer.max_candidate_names = 500
+TextAnalyzer.max_diagnose_sample_pages = 3
 
 function TextAnalyzer:new(o)
     o = o or {}
@@ -31,6 +37,31 @@ local function firstText(value)
         return value.text or value.title or ""
     end
     return ""
+end
+
+local function safeDocPath(doc)
+    if not doc then return "" end
+    if type(doc.file) == "string" then return doc.file end
+    if type(doc.getFileName) == "function" then
+        local ok, name = pcall(function() return doc:getFileName() end)
+        if ok and type(name) == "string" then return name end
+    end
+    return ""
+end
+
+local function isPDFDocument(doc, book_path)
+    book_path = book_path or safeDocPath(doc)
+    if type(book_path) == "string" and book_path:lower():match("%.pdf$") then
+        return true
+    end
+    if doc and type(doc.getProps) == "function" then
+        local ok, props = pcall(function() return doc:getProps() end)
+        if ok and type(props) == "table" then
+            local format = tostring(props.format or props.doc_format or props.type or ""):lower()
+            if format:match("pdf") then return true end
+        end
+    end
+    return false
 end
 
 function TextAnalyzer:getBookRange(ui, reading_percent)
@@ -88,23 +119,39 @@ function TextAnalyzer:splitLongText(text, title, chunks)
     end
 end
 
-function TextAnalyzer:getTextFromPages(ui, start_page, end_page)
+function TextAnalyzer:getTextFromPages(ui, start_page, end_page, char_limit)
     local parts = {}
+    local total_chars = 0
     if not ui or not ui.document or type(ui.document.getPageText) ~= "function" then
-        return ""
+        return "", { pages_read = 0, errors = 0, limited = false }
     end
 
+    local stats = { pages_read = 0, errors = 0, limited = false }
+    char_limit = tonumber(char_limit) or self.max_scan_chars
     for page = start_page, end_page do
         local ok, page_text = pcall(function()
             return ui.document:getPageText(page)
         end)
         page_text = ok and firstText(page_text) or ""
+        if not ok then stats.errors = stats.errors + 1 end
         if #page_text > 0 then
+            local remaining = char_limit - total_chars
+            if remaining <= 0 then
+                stats.limited = true
+                break
+            end
+            if #page_text > remaining then
+                page_text = page_text:sub(1, remaining)
+                stats.limited = true
+            end
             table.insert(parts, page_text)
+            total_chars = total_chars + #page_text
+            stats.pages_read = stats.pages_read + 1
         end
     end
 
-    return table.concat(parts, "\n\n")
+    stats.char_count = total_chars
+    return table.concat(parts, "\n\n"), stats
 end
 
 function TextAnalyzer:buildChunks(ui, reading_percent)
@@ -115,7 +162,17 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
 
     local start_page, end_page, page_count = self:getBookRange(ui, reading_percent)
     local doc = ui.document
-    local book_path = doc.file or (doc.getFileName and doc:getFileName()) or ""
+    local book_path = safeDocPath(doc)
+    local is_pdf = isPDFDocument(doc, book_path)
+    local page_limit = is_pdf and self.max_pdf_scan_pages or self.max_scan_pages
+    local original_end_page = end_page
+    if page_count > 0 and end_page >= start_page then
+        end_page = math.min(end_page, start_page + page_limit - 1)
+    end
+    local char_budget = self.max_scan_chars
+    local limited = end_page < original_end_page
+    local pages_read = 0
+    local page_errors = 0
 
     local ok_toc, toc = pcall(function()
         return doc:getToc()
@@ -124,6 +181,10 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
 
     if ok_toc and type(toc) == "table" and #toc > 0 and type(doc.getPageText) == "function" then
         for i, chapter in ipairs(toc) do
+            if char_budget <= 0 then
+                limited = true
+                break
+            end
             local chapter_page = tonumber(chapter.page) or 1
             if chapter_page <= end_page then
                 local next_page = end_page + 1
@@ -132,13 +193,28 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
                 end
                 local chapter_end = math.max(chapter_page, next_page - 1)
                 if chapter_end >= start_page then
-                    local text = self:getTextFromPages(ui, math.max(start_page, chapter_page), chapter_end)
+                    local text, page_stats = self:getTextFromPages(ui, math.max(start_page, chapter_page), chapter_end, char_budget)
+                    pages_read = pages_read + (page_stats.pages_read or 0)
+                    page_errors = page_errors + (page_stats.errors or 0)
+                    if page_stats.limited then limited = true end
+                    char_budget = char_budget - #text
                     self:splitLongText(text, chapter.title or ("Chapter " .. tostring(i)), chunks)
                 end
             end
         end
         if #chunks > 0 then
-            return chunks, { method = "toc_pages", page_count = page_count, end_page = end_page, attempts = attempts }
+            return chunks, {
+                method = "toc_pages",
+                page_count = page_count,
+                end_page = end_page,
+                original_end_page = original_end_page,
+                page_limit = page_limit,
+                char_limit = self.max_scan_chars,
+                pages_read = pages_read,
+                page_errors = page_errors,
+                limited = limited or char_budget <= 0,
+                attempts = attempts,
+            }
         end
         table.insert(attempts, "toc_pages:0")
     end
@@ -146,18 +222,37 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
     if type(doc.getPageText) == "function" and page_count > 0 then
         local page = start_page
         while page <= end_page do
+            if char_budget <= 0 then
+                limited = true
+                break
+            end
             local chunk_end = math.min(end_page, page + 9)
-            local text = self:getTextFromPages(ui, page, chunk_end)
+            local text, page_stats = self:getTextFromPages(ui, page, chunk_end, char_budget)
+            pages_read = pages_read + (page_stats.pages_read or 0)
+            page_errors = page_errors + (page_stats.errors or 0)
+            if page_stats.limited then limited = true end
+            char_budget = char_budget - #text
             self:splitLongText(text, "Pages " .. tostring(page) .. "-" .. tostring(chunk_end), chunks)
             page = chunk_end + 1
         end
         if #chunks > 0 then
-            return chunks, { method = "pages", page_count = page_count, end_page = end_page, attempts = attempts }
+            return chunks, {
+                method = "pages",
+                page_count = page_count,
+                end_page = end_page,
+                original_end_page = original_end_page,
+                page_limit = page_limit,
+                char_limit = self.max_scan_chars,
+                pages_read = pages_read,
+                page_errors = page_errors,
+                limited = limited or char_budget <= 0,
+                attempts = attempts,
+            }
         end
         table.insert(attempts, "pages:0")
     end
 
-    if type(doc.getFullText) == "function" then
+    if not is_pdf and type(doc.getFullText) == "function" then
         local ok_full, full_text = pcall(function()
             return doc:getFullText()
         end)
@@ -165,15 +260,19 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
             if reading_percent and reading_percent < 100 then
                 full_text = full_text:sub(1, math.max(1, math.floor(#full_text * reading_percent / 100)))
             end
+            if #full_text > self.max_scan_chars then
+                full_text = full_text:sub(1, self.max_scan_chars)
+                limited = true
+            end
             self:splitLongText(full_text, "Book text", chunks)
             if #chunks > 0 then
-                return chunks, { method = "full_text", page_count = page_count, end_page = end_page, attempts = attempts }
+                return chunks, { method = "full_text", page_count = page_count, end_page = end_page, char_limit = self.max_scan_chars, limited = limited, attempts = attempts }
             end
         end
         table.insert(attempts, "getFullText:" .. tostring(ok_full and #(full_text or "") or "error"))
     end
 
-    if type(doc.getTextFromPositions) == "function" then
+    if not is_pdf and type(doc.getTextFromPositions) == "function" then
         local ok_pos, pos_text = pcall(function()
             return doc:getTextFromPositions(0, 120000)
         end)
@@ -181,9 +280,13 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
             if reading_percent and reading_percent < 100 then
                 pos_text = pos_text:sub(1, math.max(1, math.floor(#pos_text * reading_percent / 100)))
             end
+            if #pos_text > self.max_scan_chars then
+                pos_text = pos_text:sub(1, self.max_scan_chars)
+                limited = true
+            end
             self:splitLongText(pos_text, "Book text", chunks)
             if #chunks > 0 then
-                return chunks, { method = "positions", page_count = page_count, end_page = end_page, attempts = attempts }
+                return chunks, { method = "positions", page_count = page_count, end_page = end_page, char_limit = self.max_scan_chars, limited = limited, attempts = attempts }
             end
         end
         table.insert(attempts, "getTextFromPositions:" .. tostring(ok_pos and #(pos_text or "") or "error"))
@@ -194,9 +297,13 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
             return ui.view.document:extractText()
         end)
         if ok_view and type(view_text) == "string" and #view_text > 0 then
+            if #view_text > self.max_scan_chars then
+                view_text = view_text:sub(1, self.max_scan_chars)
+                limited = true
+            end
             self:splitLongText(view_text, "Visible text", chunks)
             if #chunks > 0 then
-                return chunks, { method = "view_extract_text", page_count = page_count, end_page = end_page, attempts = attempts }
+                return chunks, { method = "view_extract_text", page_count = page_count, end_page = end_page, char_limit = self.max_scan_chars, limited = limited, attempts = attempts }
             end
         end
         table.insert(attempts, "view.extractText:" .. tostring(ok_view and #(view_text or "") or "error"))
@@ -209,9 +316,13 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
             return analyzer:getCurrentChapterText(ui)
         end)
         if ok_current and type(current_text) == "string" and #current_text > 0 then
+            if #current_text > self.max_scan_chars then
+                current_text = current_text:sub(1, self.max_scan_chars)
+                limited = true
+            end
             self:splitLongText(current_text, current_title or "Current section", chunks)
             if #chunks > 0 then
-                return chunks, { method = "current_section", page_count = page_count, end_page = end_page, attempts = attempts }
+                return chunks, { method = "current_section", page_count = page_count, end_page = end_page, char_limit = self.max_scan_chars, limited = limited, attempts = attempts }
             end
         end
         table.insert(attempts, "current_section:" .. tostring(ok_current and #(current_text or "") or "error"))
@@ -232,7 +343,7 @@ function TextAnalyzer:buildChunks(ui, reading_percent)
     end
 
     logger.warn("TextAnalyzer: Could not build text chunks")
-    return chunks, { error = "no_text", page_count = page_count, end_page = end_page, attempts = attempts, book_path = book_path }
+    return chunks, { error = "no_text", page_count = page_count, end_page = end_page, original_end_page = original_end_page, page_limit = page_limit, char_limit = self.max_scan_chars, limited = limited, attempts = attempts, book_path = book_path }
 end
 
 function TextAnalyzer:getCurrentPage(ui)
@@ -317,19 +428,6 @@ function TextAnalyzer:getNearbyContext(ui, char_limit)
         end
     end
 
-    local reading_percent = 100
-    if page_count > 0 then
-        reading_percent = math.max(1, math.min(100, math.floor(page / page_count * 100)))
-    end
-    local chunks, chunk_stats = self:buildChunks(ui, reading_percent)
-    if chunks and #chunks > 0 then
-        local chunk = chunks[#chunks]
-        stats.method = "nearby_chunk"
-        stats.source_method = chunk_stats and chunk_stats.method
-        stats.raw_char_count = #(chunk.text or "")
-        return self:trimAroundCenter(chunk.text or "", char_limit), stats
-    end
-
     stats.error = "no_text"
     return "", stats
 end
@@ -356,7 +454,7 @@ function TextAnalyzer:diagnose(ui)
     end
 
     local doc = ui.document
-    local book_path = doc.file or (doc.getFileName and doc:getFileName()) or ""
+    local book_path = safeDocPath(doc)
     table.insert(lines, "Book: " .. tostring(book_path))
 
     local methods = {
@@ -367,17 +465,27 @@ function TextAnalyzer:diagnose(ui)
         table.insert(lines, name .. ": " .. tostring(type(doc[name])))
     end
 
-    local chunks, stats = self:buildChunks(ui, 100)
+    local current_page = self:getCurrentPage(ui) or 1
+    local ok_pages, page_count = pcall(function()
+        return type(doc.getPageCount) == "function" and doc:getPageCount() or 0
+    end)
+    page_count = ok_pages and tonumber(page_count) or 0
     table.insert(lines, "")
-    table.insert(lines, "buildChunks method: " .. tostring(stats and stats.method or "none"))
-    table.insert(lines, "buildChunks error: " .. tostring(stats and stats.error or "none"))
-    table.insert(lines, "chunks: " .. tostring(#chunks))
-    if stats and stats.attempts then
-        table.insert(lines, "attempts: " .. table.concat(stats.attempts, ", "))
-    end
-    if chunks[1] then
-        table.insert(lines, "first chunk chars: " .. tostring(#(chunks[1].text or "")))
-        table.insert(lines, "first chunk preview:\n" .. (chunks[1].text or ""):sub(1, 1000))
+    table.insert(lines, "current page: " .. tostring(current_page))
+    table.insert(lines, "page count: " .. tostring(page_count))
+    if type(doc.getPageText) == "function" then
+        local sample_start = math.max(1, current_page - 1)
+        local sample_end = page_count > 0 and math.min(page_count, sample_start + self.max_diagnose_sample_pages - 1)
+            or sample_start + self.max_diagnose_sample_pages - 1
+        local sample_text, sample_stats = self:getTextFromPages(ui, sample_start, sample_end, 4000)
+        table.insert(lines, "sample pages: " .. tostring(sample_start) .. "-" .. tostring(sample_end))
+        table.insert(lines, "sample chars: " .. tostring(#sample_text))
+        table.insert(lines, "sample errors: " .. tostring(sample_stats.errors or 0))
+        if #sample_text > 0 then
+            table.insert(lines, "sample preview:\n" .. sample_text:sub(1, 1000))
+        end
+    else
+        table.insert(lines, "sample pages: unavailable")
     end
     return table.concat(lines, "\n")
 end
@@ -396,7 +504,7 @@ function TextAnalyzer:addCandidate(map, name, context, position)
     local entry = map[name]
     if not entry then
         map._size = map._size or 0
-        if map._size > 600 then return end
+        if map._size >= self.max_candidate_names then return end
         entry = {
             name = name,
             count = 0,
@@ -423,12 +531,14 @@ end
 
 function TextAnalyzer:extractAsciiNames(text, map)
     for pos, name in text:gmatch("()(%u[%a'%-]+%s+%u[%a'%-]+)") do
+        if (map._size or 0) >= self.max_candidate_names then return end
         local start_pos = math.max(1, pos - 70)
         local end_pos = math.min(#text, pos + #name + 70)
         self:addCandidate(map, name, text:sub(start_pos, end_pos), pos)
     end
 
     for pos, name in text:gmatch("()(%u[%a'%-][%a'%-]+)") do
+        if (map._size or 0) >= self.max_candidate_names then return end
         local start_pos = math.max(1, pos - 60)
         local end_pos = math.min(#text, pos + #name + 60)
         self:addCandidate(map, name, text:sub(start_pos, end_pos), pos)
@@ -484,6 +594,9 @@ local function isCJKChar(ch)
 end
 
 function TextAnalyzer:extractCJKNames(text, map)
+    if #text > self.max_cjk_scan_chars then
+        text = text:sub(1, self.max_cjk_scan_chars)
+    end
     local chars = utf8Chars(text)
     local byte_positions = {}
     local byte_pos = 1
@@ -497,6 +610,7 @@ function TextAnalyzer:extractCJKNames(text, map)
     }
 
     for i = 1, #chars - 1 do
+        if (map._size or 0) >= self.max_candidate_names then return end
         if isCJKChar(chars[i]) and isCJKChar(chars[i + 1]) then
             for len = 2, 4 do
                 if i + len - 1 <= #chars then

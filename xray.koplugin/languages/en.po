@@ -859,6 +859,9 @@ msgstr "Explain the selected text in the context of this book."
 msgid "menu_enrich_nearby_context"
 msgstr "Enrich characters from nearby context"
 
+msgid "menu_advanced_scan"
+msgstr "Advanced text scan"
+
 msgid "menu_background_job"
 msgstr "Background AI job"
 
@@ -870,6 +873,12 @@ msgstr "AI analysis complete. X-Ray data is ready."
 
 msgid "background_job_failed"
 msgstr "AI analysis failed."
+
+msgid "background_job_retry"
+msgstr "Retry last job"
+
+msgid "background_job_fallback_metadata"
+msgstr "Retry as light seed"
 
 msgid "background_job_cancel"
 msgstr "Cancel current job"

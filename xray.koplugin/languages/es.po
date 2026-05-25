@@ -673,6 +673,9 @@ msgstr "Endpoint compatible con OpenAI guardado"
 msgid "menu_enrich_nearby_context"
 msgstr "Enriquecer personajes con contexto cercano"
 
+msgid "menu_advanced_scan"
+msgstr "Escaneo de texto avanzado"
+
 msgid "menu_background_job"
 msgstr "Tarea de IA en segundo plano"
 
@@ -684,6 +687,12 @@ msgstr "Análisis de IA completo. Los datos de X-Ray están listos."
 
 msgid "background_job_failed"
 msgstr "El análisis de IA falló."
+
+msgid "background_job_retry"
+msgstr "Reintentar última tarea"
+
+msgid "background_job_fallback_metadata"
+msgstr "Reintentar como semilla ligera"
 
 msgid "background_job_cancel"
 msgstr "Cancelar tarea actual"

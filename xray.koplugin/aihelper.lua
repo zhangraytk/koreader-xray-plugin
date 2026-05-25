@@ -1121,10 +1121,20 @@ function AIHelper:addOpenAICompatibilityParams(request_data, config)
     end
 end
 
+function AIHelper:getOpenAICompatibilityParamNames(request_data)
+    local names = {}
+    if request_data.thinking ~= nil then table.insert(names, "thinking") end
+    if request_data.reasoning_effort ~= nil then table.insert(names, "reasoning_effort") end
+    if request_data.response_format ~= nil then table.insert(names, "response_format") end
+    return names
+end
+
 function AIHelper:stripOpenAICompatibilityParams(request_data)
+    local names = self:getOpenAICompatibilityParamNames(request_data)
     request_data.thinking = nil
     request_data.reasoning_effort = nil
     request_data.response_format = nil
+    return names
 end
 
 function AIHelper:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data)
@@ -1196,6 +1206,104 @@ function AIHelper:sanitizeJSONText(text)
     end
 
     return table.concat(out)
+end
+
+AIHelper.max_json_scan_chars = 60000
+
+function AIHelper:extractJSONObjectTexts(text, max_candidates)
+    text = self:sanitizeJSONText(text)
+    text = text:gsub("```json", "```"):gsub("```JSON", "```")
+    text = text:gsub("^%s*```%s*", ""):gsub("%s*```%s*$", "")
+    text = self:trimText(text)
+    if #text == 0 then return {} end
+    if #text > self.max_json_scan_chars then
+        text = text:sub(1, self.max_json_scan_chars)
+    end
+
+    max_candidates = tonumber(max_candidates) or 8
+    local candidates = {}
+    local start_pos = 1
+    while start_pos <= #text and #candidates < max_candidates do
+        local first = text:find("{", start_pos, true)
+        if not first then break end
+
+        local depth = 0
+        local in_string = false
+        local escaped = false
+        local found_end = nil
+        for i = first, #text do
+            local ch = text:sub(i, i)
+            if in_string then
+                if escaped then
+                    escaped = false
+                elseif ch == "\\" then
+                    escaped = true
+                elseif ch == '"' then
+                    in_string = false
+                end
+            elseif ch == '"' then
+                in_string = true
+            elseif ch == "{" then
+                depth = depth + 1
+            elseif ch == "}" then
+                depth = depth - 1
+                if depth == 0 then
+                    found_end = i
+                    break
+                end
+            end
+        end
+
+        if found_end then
+            table.insert(candidates, text:sub(first, found_end))
+            start_pos = first + 1
+        else
+            break
+        end
+    end
+
+    if #candidates == 0 and text:sub(1, 1) == "{" then
+        table.insert(candidates, text)
+    end
+    return candidates
+end
+
+function AIHelper:extractJSONObjectText(text)
+    local candidates = self:extractJSONObjectTexts(text, 1)
+    return candidates[1] or ""
+end
+
+function AIHelper:decodeJSONObject(text, validator)
+    local candidates = self:extractJSONObjectTexts(text, 8)
+    for _, json_text in ipairs(candidates) do
+        local success, data = pcall(json.decode, json_text)
+        if success and type(data) == "table" then
+            if not validator or validator(data) then
+                return data
+            end
+        end
+    end
+    logger.warn("AIHelper: Failed to decode JSON object")
+    return nil
+end
+
+function AIHelper:decodeCharacterCandidate(text)
+    local data = self:decodeJSONObject(text, function(candidate)
+        return self:normalizeCharacterCandidate(candidate) ~= nil
+    end)
+    return self:normalizeCharacterCandidate(data)
+end
+
+function AIHelper:looksLikeBookData(data)
+    if type(data) ~= "table" then return false end
+    return type(data.book_title or data.title) == "string"
+        or type(data.author or data.book_author) == "string"
+        or type(data.summary or data.book_summary) == "string"
+        or type(data.characters or data.Characters) == "table"
+        or type(data.timeline or data.Timeline) == "table"
+        or type(data.locations or data.Locations) == "table"
+        or type(data.themes or data.Themes) == "table"
+        or type(data.historical_figures or data.HistoricalFigures) == "table"
 end
 
 function AIHelper:sanitizeChatMessages(request_data)
@@ -1322,23 +1430,32 @@ end
 
 function AIHelper:normalizeCharacterCandidate(data)
     if type(data) ~= "table" then return nil end
+    if type(data.character) == "table" then
+        data = data.character
+    elseif type(data.person) == "table" then
+        data = data.person
+    elseif type(data.result) == "table" then
+        data = data.result
+    end
 
+    local raw_aliases = data.aliases or data.Aliases or data.alternate_names or data.alternateNames or data.nicknames
     local aliases = {}
-    if type(data.aliases) == "table" then
-        for _, alias in ipairs(data.aliases) do
+    if type(raw_aliases) == "table" then
+        for _, alias in ipairs(raw_aliases) do
             alias = self:trimText(alias)
             if #alias > 0 then
                 table.insert(aliases, alias)
             end
         end
-    elseif type(data.aliases) == "string" and #self:trimText(data.aliases) > 0 then
-        table.insert(aliases, self:trimText(data.aliases))
+    elseif type(raw_aliases) == "string" and #self:trimText(raw_aliases) > 0 then
+        table.insert(aliases, self:trimText(raw_aliases))
     end
 
     local evidence = ""
-    if type(data.evidence) == "table" then
+    local raw_evidence = data.evidence or data.Evidence or data.quote or data.quotes
+    if type(raw_evidence) == "table" then
         local evidence_parts = {}
-        for _, item in ipairs(data.evidence) do
+        for _, item in ipairs(raw_evidence) do
             item = self:trimText(item)
             if #item > 0 then
                 table.insert(evidence_parts, item)
@@ -1346,19 +1463,19 @@ function AIHelper:normalizeCharacterCandidate(data)
         end
         evidence = table.concat(evidence_parts, "\n")
     else
-        evidence = self:trimText(data.evidence)
+        evidence = self:trimText(raw_evidence)
     end
 
     local candidate = {
-        name = self:trimText(data.name or data.Name),
+        name = self:trimText(data.name or data.Name or data.full_name or data.fullName or data.character_name),
         aliases = aliases,
         role = self:trimText(data.role or data.Role),
-        description = self:trimText(data.description or data.desc),
-        gender = self:trimText(data.gender),
-        occupation = self:trimText(data.occupation),
+        description = self:trimText(data.description or data.desc or data.summary or data.bio),
+        gender = self:trimText(data.gender or data.Gender),
+        occupation = self:trimText(data.occupation or data.job or data.profession),
         evidence = evidence,
         confidence = tonumber(data.confidence) or 0,
-        merge_target = self:trimText(data.merge_target or data.mergeTarget),
+        merge_target = self:trimText(data.merge_target or data.mergeTarget or data.existing_character or data.existingCharacter),
     }
 
     if #candidate.name == 0 then
@@ -1420,10 +1537,6 @@ end
 function AIHelper:callGeminiCharacterExtract(prompt, config)
     logger.info("AIHelper: Calling Google Gemini API for character extraction")
 
-    if not self:checkNetworkConnectivity() then
-        return nil, "error_no_network", "İnternet bağlantısı yok"
-    end
-
     local model = config.model or "gemini-2.5-flash"
     local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. model .. ":generateContent?key=" .. config.api_key
     local request_body = json.encode({
@@ -1458,6 +1571,13 @@ function AIHelper:callGeminiCharacterExtract(prompt, config)
 
         local response_text = table.concat(response_body)
         local code_num = tonumber(code)
+        self.last_request_stats = {
+            provider_type = "gemini",
+            request_size = #request_body,
+            response_size = #response_text,
+            status_code = code_num,
+            retry_count = attempt - 1,
+        }
         logger.info("AIHelper: Gemini character API Code:", code_num, "Length:", #response_text)
 
         if code_num == 200 then
@@ -1476,7 +1596,7 @@ function AIHelper:callGeminiCharacterExtract(prompt, config)
                             table.insert(answer_parts, part.text)
                         end
                     end
-                    local parsed = self:normalizeCharacterCandidate(self:decodeJSONObject(table.concat(answer_parts, "\n")))
+                    local parsed = self:decodeCharacterCandidate(table.concat(answer_parts, "\n"))
                     if parsed then
                         return parsed
                     end
@@ -1505,10 +1625,6 @@ function AIHelper:callChatGPTCharacterExtract(prompt, config)
     local model = config.model or "gpt-4o-mini"
     local url = self:normalizeChatCompletionsEndpoint(config.endpoint) or "https://api.openai.com/v1/chat/completions"
 
-    if not self:isLocalEndpoint(url) and not self:checkNetworkConnectivity() then
-        return nil, "error_no_network", "İnternet bağlantısı yok"
-    end
-
     local request_data = {
         model = model,
         messages = {
@@ -1527,14 +1643,8 @@ function AIHelper:callChatGPTCharacterExtract(prompt, config)
         response_format = { type = "json_object" },
     }
 
-    if config.thinking_enabled ~= nil then
-        request_data.thinking = {
-            type = config.thinking_enabled and "enabled" or "disabled"
-        }
-        if config.thinking_enabled then
-            request_data.reasoning_effort = config.reasoning_effort or "high"
-        end
-    end
+    self:sanitizeChatMessages(request_data)
+    self:addOpenAICompatibilityParams(request_data, config)
 
     local request_body = json.encode(request_data)
     local max_retries = 1
@@ -1547,6 +1657,17 @@ function AIHelper:callChatGPTCharacterExtract(prompt, config)
         local res, code, headers, status, response_text = self:requestChatCompletions(url, request_body, config.api_key)
         response_text = response_text or ""
         local code_num = tonumber(code)
+        self.last_request_stats = {
+            provider_type = "openai_compatible",
+            request_size = #request_body,
+            response_size = #response_text,
+            status_code = code_num,
+            retry_count = attempt - 1,
+            compatibility_retry = compatibility_retry ~= nil,
+            stripped_params = compatibility_retry and compatibility_retry.stripped_params or nil,
+            first_error_code = compatibility_retry and compatibility_retry.first_error_code or nil,
+            first_status_code = compatibility_retry and compatibility_retry.first_status_code or nil,
+        }
         logger.info("AIHelper: ChatGPT character API Code:", code_num, "Length:", #response_text)
 
         if code_num == 200 then
@@ -1559,7 +1680,7 @@ function AIHelper:callChatGPTCharacterExtract(prompt, config)
                     return nil, "error_safety", "OpenAI içerik filtresi engelledi."
                 end
                 if choice.message and choice.message.content then
-                    local parsed = self:normalizeCharacterCandidate(self:decodeJSONObject(choice.message.content))
+                    local parsed = self:decodeCharacterCandidate(choice.message.content)
                     if parsed then
                         return parsed
                     end
@@ -1584,9 +1705,19 @@ function AIHelper:callChatGPTCharacterExtract(prompt, config)
             local detail = status or code or res or "unknown transport error"
             return nil, "error_network", "Request failed: " .. tostring(detail)
         else
-            local detail = self:getAPIErrorMessage(response_text)
-            local error_context = "\nURL: " .. tostring(url) .. "\nModel: " .. tostring(model)
-            return nil, "error_" .. tostring(code_num), "HTTP " .. tostring(code_num) .. (detail and (": " .. detail) or "") .. error_context
+            if self:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data) and attempt <= max_retries then
+                logger.warn("AIHelper: ChatGPT character body parse error; retrying without compatibility params")
+                compatibility_retry = {
+                    stripped_params = self:stripOpenAICompatibilityParams(request_data),
+                    first_error_code = self:getAPIErrorMessage(response_text),
+                    first_status_code = code_num,
+                }
+                request_body = json.encode(request_data)
+            else
+                local detail = self:getAPIErrorMessage(response_text)
+                local error_context = "\nURL: " .. tostring(url) .. "\nModel: " .. tostring(model)
+                return nil, "error_" .. tostring(code_num), "HTTP " .. tostring(code_num) .. (detail and (": " .. detail) or "") .. error_context
+            end
         end
     end
 
@@ -1597,10 +1728,6 @@ end
 
 function AIHelper:callGeminiQuestion(prompt, config)
     logger.info("AIHelper: Calling Google Gemini API for Q&A")
-
-    if not self:checkNetworkConnectivity() then
-        return nil, "error_no_network", "İnternet bağlantısı yok"
-    end
 
     local model = config.model or "gemini-3.1-flash-lite"
     local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. model .. ":generateContent?key=" .. config.api_key
@@ -1643,6 +1770,13 @@ function AIHelper:callGeminiQuestion(prompt, config)
 
         local response_text = table.concat(response_body)
         local code_num = tonumber(code)
+        self.last_request_stats = {
+            provider_type = "gemini",
+            request_size = #request_body,
+            response_size = #response_text,
+            status_code = code_num,
+            retry_count = attempt - 1,
+        }
         logger.info("AIHelper: Gemini Q&A API Code:", code_num, "Length:", #response_text)
 
         if code_num == 200 then
@@ -1689,10 +1823,6 @@ function AIHelper:callChatGPTQuestion(prompt, config)
     local model = config.model or "gpt-4o-mini"
     local url = self:normalizeChatCompletionsEndpoint(config.endpoint) or "https://api.openai.com/v1/chat/completions"
 
-    if not self:isLocalEndpoint(url) and not self:checkNetworkConnectivity() then
-        return nil, "error_no_network", "İnternet bağlantısı yok"
-    end
-
     local request_data = {
         model = model,
         messages = {
@@ -1719,6 +1849,7 @@ function AIHelper:callChatGPTQuestion(prompt, config)
     logger.info("AIHelper: ChatGPT Q&A request size:", #request_body)
 
     local max_retries = 1
+    local compatibility_retry = nil
     for attempt = 1, max_retries + 1 do
         if attempt > 1 then
             socket.sleep(3)
@@ -1728,6 +1859,17 @@ function AIHelper:callChatGPTQuestion(prompt, config)
         local res, code, headers, status, response_text = self:requestChatCompletions(url, request_body, config.api_key)
         response_text = response_text or ""
         local code_num = tonumber(code)
+        self.last_request_stats = {
+            provider_type = "openai_compatible",
+            request_size = #request_body,
+            response_size = #response_text,
+            status_code = code_num,
+            retry_count = attempt - 1,
+            compatibility_retry = compatibility_retry ~= nil,
+            stripped_params = compatibility_retry and compatibility_retry.stripped_params or nil,
+            first_error_code = compatibility_retry and compatibility_retry.first_error_code or nil,
+            first_status_code = compatibility_retry and compatibility_retry.first_status_code or nil,
+        }
         logger.info("AIHelper: ChatGPT Q&A API Code:", code_num, "Length:", #response_text)
 
         if code_num == 200 then
@@ -1766,7 +1908,11 @@ function AIHelper:callChatGPTQuestion(prompt, config)
         else
             if self:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data) and attempt <= max_retries then
                 logger.warn("AIHelper: ChatGPT Q&A body parse error; retrying without thinking/response_format compatibility params")
-                self:stripOpenAICompatibilityParams(request_data)
+                compatibility_retry = {
+                    stripped_params = self:stripOpenAICompatibilityParams(request_data),
+                    first_error_code = self:getAPIErrorMessage(response_text),
+                    first_status_code = code_num,
+                }
                 request_body = json.encode(request_data)
             else
                 local detail = self:getAPIErrorMessage(response_text)
@@ -1781,15 +1927,11 @@ end
 
 -- Check network
 function AIHelper:checkNetworkConnectivity()
-    local socket = require("socket")
-    local success, result = pcall(function()
-        local tcp = socket.tcp()
-        tcp:settimeout(3)
-        local connect_result = tcp:connect("8.8.8.8", 53)
-        tcp:close()
-        return connect_result
-    end)
-    return success and (result == 1 or result == true)
+    -- Do not block provider calls on a generic DNS probe. KOReader devices may
+    -- use local endpoints, captive networks, or proxies where 8.8.8.8 is not
+    -- reachable even though the configured AI endpoint is. The actual request
+    -- path reports transport/API errors with endpoint-specific diagnostics.
+    return true
 end
 
 -- Load language
@@ -1973,10 +2115,6 @@ end
 function AIHelper:callGemini(prompt, config)
     logger.info("AIHelper: Calling Google Gemini API")
 
-    if not self:checkNetworkConnectivity() then
-        return nil, "error_no_network", "İnternet bağlantısı yok"
-    end
-
     local model = config.model or "gemini-3.1-flash-lite"
     local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. model .. ":generateContent?key=" .. config.api_key
 
@@ -2002,6 +2140,7 @@ function AIHelper:callGemini(prompt, config)
 
     -- RETRY LOGIC
     local max_retries = 1
+    local compatibility_retry = nil
     for attempt = 1, max_retries + 1 do
         if attempt > 1 then
              local socket = require("socket")
@@ -2023,6 +2162,13 @@ function AIHelper:callGemini(prompt, config)
 
         local response_text = table.concat(response_body)
         local code_num = tonumber(code)
+        self.last_request_stats = {
+            provider_type = "gemini",
+            request_size = #request_body,
+            response_size = #response_text,
+            status_code = code_num,
+            retry_count = attempt - 1,
+        }
 
         logger.info("AIHelper: API Code:", code_num, "Length:", #response_text)
 
@@ -2071,10 +2217,6 @@ function AIHelper:callChatGPT(prompt, config)
     local model = config.model or "gpt-4o-mini"
     local url = self:normalizeChatCompletionsEndpoint(config.endpoint) or "https://api.openai.com/v1/chat/completions"
 
-    if not self:isLocalEndpoint(url) and not self:checkNetworkConnectivity() then
-        return nil, "error_no_network", "İnternet bağlantısı yok"
-    end
-
     -- System instruction ekle (eğer prompts'ta varsa)
     local system_instruction = self.prompts and self.prompts.system_instruction or
         "You are an expert literary critic. Respond ONLY with valid JSON format."
@@ -2112,6 +2254,7 @@ function AIHelper:callChatGPT(prompt, config)
 
     -- RETRY LOGIC
     local max_retries = 1
+    local compatibility_retry = nil
     for attempt = 1, max_retries + 1 do
         if attempt > 1 then
              local socket = require("socket")
@@ -2122,6 +2265,17 @@ function AIHelper:callChatGPT(prompt, config)
         local res, code, headers, status, response_text = self:requestChatCompletions(url, request_body, config.api_key)
         response_text = response_text or ""
         local code_num = tonumber(code)
+        self.last_request_stats = {
+            provider_type = "openai_compatible",
+            request_size = #request_body,
+            response_size = #response_text,
+            status_code = code_num,
+            retry_count = attempt - 1,
+            compatibility_retry = compatibility_retry ~= nil,
+            stripped_params = compatibility_retry and compatibility_retry.stripped_params or nil,
+            first_error_code = compatibility_retry and compatibility_retry.first_error_code or nil,
+            first_status_code = compatibility_retry and compatibility_retry.first_status_code or nil,
+        }
 
         logger.info("AIHelper: ChatGPT API Code:", code_num, "Length:", #response_text)
 
@@ -2176,7 +2330,11 @@ function AIHelper:callChatGPT(prompt, config)
         else
             if self:shouldRetryWithoutCompatibilityParams(code_num, response_text, request_data) and attempt <= max_retries then
                 logger.warn("AIHelper: ChatGPT body parse error; retrying without thinking/response_format compatibility params")
-                self:stripOpenAICompatibilityParams(request_data)
+                compatibility_retry = {
+                    stripped_params = self:stripOpenAICompatibilityParams(request_data),
+                    first_error_code = self:getAPIErrorMessage(response_text),
+                    first_status_code = code_num,
+                }
                 request_body = json.encode(request_data)
             else
                 logger.warn("AIHelper: Unexpected error code:", code_num)
@@ -2191,26 +2349,10 @@ function AIHelper:callChatGPT(prompt, config)
 end
 
 function AIHelper:parseAIResponse(text)
-    -- Temizlik
-    local json_text = text:gsub("```json", ""):gsub("```", ""):gsub("^%s+", ""):gsub("%s+$", "")
-
-    -- Parse
-    local success, data = pcall(json.decode, json_text)
-
-    -- Eğer başarısızsa, {} arasını bulmaya çalış
-    if not success then
-        local first = json_text:find("{")
-        local last_brace = nil
-        for i = #json_text, 1, -1 do
-            if json_text:sub(i,i) == "}" then last_brace = i; break end
-        end
-        if first and last_brace then
-             json_text = json_text:sub(first, last_brace)
-             success, data = pcall(json.decode, json_text)
-        end
-    end
-
-    if success and data then
+    local data = self:decodeJSONObject(text, function(candidate)
+        return self:looksLikeBookData(candidate)
+    end)
+    if data then
         return self:validateAndCleanData(data)
     end
     return nil
@@ -2293,10 +2435,6 @@ function AIHelper:testAPIKey(provider)
 
     if not provider_config.api_key or #provider_config.api_key == 0 then
         return false, "AI API Key not set"
-    end
-
-    if not self:checkNetworkConnectivity() then
-        return false, "No internet connection!"
     end
 
     logger.info("AIHelper: Testing", provider, "API key")
